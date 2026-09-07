@@ -30,9 +30,6 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Confía en las cabeceras X-Forwarded-* enviadas por el reverse proxy (NetBird/Cloudflare)
-        $middleware->trustProxies(at: '*');
-
         $middleware->prependToGroup('web', RedirectToInstaller::class);
         $middleware->appendToGroup('web', AffiliateTracking::class);
         $middleware->appendToGroup('web', SetLocale::class);

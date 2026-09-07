@@ -33,7 +33,7 @@
 <body>
 <div class="register-box">
     <div class="login-logo">
-        <h1>PNLCS</h1>
+        <h1>Neogenesys</h1>
         <p>{{ __('client.auth.create_your_account') }}</p>
     </div>
     <div class="card">

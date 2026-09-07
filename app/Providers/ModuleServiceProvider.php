@@ -13,7 +13,10 @@ class ModuleServiceProvider extends ServiceProvider
             $registry = new ModuleRegistry();
 
             // Built-in server modules
+            // OpenNebula is using the custom server module implementation in this project,
+            // but the product editor stores the module as "opennebula".
             $registry->registerServer('custom', \Modules\Servers\Custom\CustomModule::class);
+            $registry->registerServer('opennebula', \Modules\Servers\Custom\CustomModule::class);
 
             // Built-in gateway modules
             $registry->registerGateway('banktransfer', \Modules\Gateways\BankTransfer\BankTransferModule::class);

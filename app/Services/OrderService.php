@@ -191,6 +191,20 @@ class OrderService
 
         foreach ($services as $svc) {
             $autoSetup = strtolower((string) ($svc->product?->auto_setup ?? ''));
+            $serverType = strtolower((string) ($svc->product?->server_type ?? ''));
+
+            // Custom / OpenNebula services must not be built on order placement.
+            // They are only provisioned when an admin explicitly confirms and
+            // activates the service from the service panel.
+            if ($serverType === 'custom' || $serverType === 'opennebula') {
+                Log::info('Skipped auto-provision on order placement for custom/opennebula service #'.$svc->id, [
+                    'server_type' => $serverType,
+                    'auto_setup' => $autoSetup,
+                ]);
+
+                continue;
+            }
+
             if ($autoSetup === 'order' && $svc->product?->server_type) {
                 $result = $this->provisioning->createAccount($svc);
                 Log::info('Setup-on-order provisioning for service #'.$svc->id, [
