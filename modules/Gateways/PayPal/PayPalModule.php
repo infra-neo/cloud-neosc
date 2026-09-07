@@ -24,8 +24,8 @@ class PayPalModule implements GatewayModuleInterface
     {
         return [
             ["name" => "email",         "label" => "PayPal Email",   "type" => "text"],
-            ["name" => "client_id",     "label" => "Client ID",      "type" => "text"],
-            ["name" => "client_secret", "label" => "Client Secret",  "type" => "password"],
+            ["name" => "client_id",     "label" => "Client ID",      "type" => "text", "required" => true],
+            ["name" => "client_secret", "label" => "Client Secret",  "type" => "password", "required" => true],
             ["name" => "sandbox",       "label" => "Sandbox Mode",   "type" => "select", "options" => ["0" => "Live", "1" => "Sandbox"]],
         ];
     }
@@ -76,7 +76,7 @@ class PayPalModule implements GatewayModuleInterface
             return ["success" => false, "message" => "PayPal credentials not configured or token request failed."];
         }
 
-        $currency = strtoupper($params["currency"] ?? "USD");
+        $currency = strtoupper($params["currency"] ?? shop_currency_code());
 
         $response = Http::withToken($accessToken)
             ->post($this->getBaseUrl() . "/v2/checkout/orders", [
@@ -140,7 +140,7 @@ class PayPalModule implements GatewayModuleInterface
             ->post($this->getBaseUrl() . "/v2/payments/captures/{$transactionId}/refund", [
                 "amount" => [
                     "value"         => number_format($amount, 2, ".", ""),
-                    "currency_code" => "USD",
+                    "currency_code" => shop_currency_code(),
                 ],
             ]);
 
@@ -168,8 +168,10 @@ class PayPalModule implements GatewayModuleInterface
     public function getPaymentForm(Invoice $invoice): string
     {
         $clientId  = $this->getSetting("client_id") ?? "";
-        $amount    = number_format((float) $invoice->total, 2, ".", "");
+        $amount    = number_format($invoice->amountDue(), 2, ".", "");
         $invoiceId = (int) $invoice->id;
+        $currency  = shop_currency_code();
+        $display   = money_fmt($invoice->total);
 
         if (!$clientId) {
             return "<div class=\"alert alert-danger\">PayPal is not configured. Please contact support.</div>";
@@ -182,12 +184,12 @@ class PayPalModule implements GatewayModuleInterface
         return <<<HTML
 <div id="paypal-button-container" class="my-3"></div>
 <div id="paypal-message" class="mt-2"></div>
-<script src="https://www.paypal.com/sdk/js?client-id={$safeClientId}&currency=USD"></script>
+<script src="https://www.paypal.com/sdk/js?client-id={$safeClientId}&currency={$currency}"></script>
 <script>
 paypal.Buttons({
     createOrder: function(data, actions) {
         return actions.order.create({
-            purchase_units: [{ reference_id: "INV-{$invoiceId}", amount: { value: "{$amount}" } }]
+            purchase_units: [{ reference_id: "INV-{$invoiceId}", amount: { value: "{$amount}", currency_code: "{$currency}" } }]
         });
     },
     onApprove: function(data, actions) {

@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\ClientStatus;
+use Illuminate\Validation\Rule;
 use App\Models\Client;
 use App\Models\ClientGroup;
 use App\Models\ClientNote;
@@ -9,10 +11,12 @@ use App\Models\Contact;
 use App\Models\Credit;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class ClientApiController extends BaseApiController
 {
+    /** The columns a caller may order the client list by. */
+    private const ORDERABLE = ['id', 'first_name', 'last_name', 'email', 'company_name', 'status', 'created_at'];
+
     public function getClients(Request $request)
     {
         $query = Client::query();
@@ -26,12 +30,31 @@ class ClientApiController extends BaseApiController
             $query->where('group_id', $request->group_id);
         }
 
-        return $this->paginated($query->orderBy($request->get('orderby', 'id'), $request->get('order', 'asc'))->paginate($this->getPerPage(), ['*'], 'page', $this->getPage()));
+        // Same rule as the screens: a caller cannot name a column that is not
+        // one, or a direction that is not a direction, and get an error page
+        // out of the database.
+        $orderBy = in_array($request->get('orderby'), self::ORDERABLE, true)
+            ? $request->get('orderby')
+            : 'id';
+        $order = strtolower((string) $request->get('order')) === 'desc' ? 'desc' : 'asc';
+
+        return $this->paginated($query->orderBy($orderBy, $order)->paginate($this->getPerPage(), ['*'], 'page', $this->getPage()));
     }
 
     public function getClientsDetails(Request $request)
     {
-        $client = Client::with('contacts')->find($request->clientid);
+        // The docs (and WHMCS) have always promised "clientid or email"; only
+        // clientid was ever read, so integrators following the docs got
+        // "Client Not Found" for perfectly good requests.
+        if (! $request->filled('clientid') && ! $request->filled('email')) {
+            return $this->error('Client ID or Email Required', 400);
+        }
+
+        $client = Client::with('contacts')
+            ->when($request->filled('clientid'),
+                fn ($q) => $q->whereKey($request->clientid),
+                fn ($q) => $q->where('email', (string) $request->email))
+            ->first();
         if (! $client) {
             return $this->error('Client Not Found', 404);
         }
@@ -41,7 +64,41 @@ class ClientApiController extends BaseApiController
 
     public function addClient(Request $request)
     {
-        $validated = $request->validate(['firstname' => 'required|string|max:255', 'lastname' => 'required|string|max:255', 'email' => 'required|email|max:255']);
+        // The address a client is found by: signing in, resetting a password,
+        // matching an incoming support email. The admin form has always refused
+        // one that is taken, and clients.email carries an ordinary index, so
+        // nothing else would have stopped a second account on it.
+        $validated = $request->validate(['firstname' => 'required|string|max:255', 'lastname' => 'required|string|max:255', 'email' => 'required|email|max:255|unique:clients,email']);
+
+        // The docs (and WHMCS) promise that a password2 opens a portal login.
+        // This method used to swallow the parameter silently, leaving an
+        // account nobody could sign in to. Portal logins live on User, so the
+        // registration service does it - one copy, or the two paths drift.
+        $password = $request->input('password2', $request->input('password'));
+        if ($password !== null && $password !== '') {
+            $request->validate([
+                'password2' => 'sometimes|string|min:8',
+                'password' => 'sometimes|string|min:8',
+                'email' => 'unique:users,email',
+            ]);
+            [, $client] = app(\App\Services\ClientRegistrationService::class)->register([
+                'first_name' => $validated['firstname'],
+                'last_name' => $validated['lastname'],
+                'email' => $validated['email'],
+                'password' => $password,
+                'company_name' => $request->companyname,
+                'address1' => $request->address1,
+                'city' => $request->city,
+                'country' => $request->country ?? 'US',
+                'phone_number' => $request->phonenumber,
+            ], $request);
+            // The service carries the fields the register form has; the API
+            // has always accepted these two on top.
+            $client->update(['state' => $request->state, 'postcode' => $request->postcode]);
+
+            return $this->success(['clientid' => $client->id]);
+        }
+
         $client = Client::create(['first_name' => $validated['firstname'], 'last_name' => $validated['lastname'], 'email' => $validated['email'], 'company_name' => $request->companyname, 'address1' => $request->address1, 'city' => $request->city, 'state' => $request->state, 'postcode' => $request->postcode, 'country' => $request->country ?? 'US', 'phone_number' => $request->phonenumber]);
 
         return $this->success(['clientid' => $client->id]);
@@ -53,6 +110,17 @@ class ClientApiController extends BaseApiController
         if (! $client) {
             return $this->error('Client Not Found', 404);
         }
+
+        // What the account screens check before writing the same two fields: an
+        // address nobody else has, and one of the three statuses. These used to
+        // go straight onto the record, so the api could move a client onto an
+        // address already in use, or hand the enum cast a status it does not
+        // know and turn the call into a 500.
+        $request->validate([
+            'email' => ['sometimes', 'email', 'max:255', Rule::unique('clients', 'email')->ignore($client->id)],
+            'status' => ['sometimes', Rule::enum(ClientStatus::class)],
+        ]);
+
         foreach (['first_name' => 'firstname', 'last_name' => 'lastname', 'email' => 'email', 'company_name' => 'companyname', 'address1' => 'address1', 'city' => 'city', 'state' => 'state', 'postcode' => 'postcode', 'country' => 'country', 'phone_number' => 'phonenumber', 'status' => 'status'] as $db => $api) {
             if ($request->has($api)) {
                 $client->$db = $request->$api;
@@ -75,6 +143,11 @@ class ClientApiController extends BaseApiController
         $live = $client->liveServiceCount();
         if ($live > 0) {
             return $this->error("Client still has {$live} service(s) that have not been terminated.", 422);
+        }
+
+        $domains = $client->liveDomainCount();
+        if ($domains > 0) {
+            return $this->error("Client still has {$domains} registered domain(s).", 422);
         }
 
         $client->delete();

@@ -24,7 +24,35 @@
                 <div class="form-group"><label class="form-label">{{ __('common.form.type') }}</label><select name="type" class="form-control"><option value="hosting" {{ $product->type=='hosting'?'selected':'' }}>{{ __('admin.products.type_hosting') }}</option><option value="reseller" {{ $product->type=='reseller'?'selected':'' }}>{{ __('admin.products.type_reseller_label') }}</option><option value="vps" {{ $product->type=='vps'?'selected':'' }}>{{ __('admin.products.type_vps') }}</option><option value="ssl" {{ $product->type=='ssl'?'selected':'' }}>{{ __('admin.products.type_ssl') }}</option><option value="other" {{ $product->type=='other'?'selected':'' }}>{{ __('admin.products.type_other') }}</option></select></div>
                 <div class="form-group"><label class="form-label">{{ __('admin.products.payment') }}</label><select name="pay_type" class="form-control"><option value="recurring" {{ $product->pay_type=='recurring'?'selected':'' }}>{{ __('admin.products.pay_recurring') }}</option><option value="onetime" {{ $product->pay_type=='onetime'?'selected':'' }}>{{ __('admin.products.pay_onetime') }}</option><option value="free" {{ $product->pay_type=='free'?'selected':'' }}>{{ __('admin.products.pay_free') }}</option></select></div>
                 <div class="form-group"><label class="form-label">{{ __('admin.products.auto_setup') }}</label><select name="auto_setup" class="form-control"><option value="order" {{ $product->auto_setup=='order'?'selected':'' }}>{{ __('admin.products.auto_setup_order') }}</option><option value="payment" {{ $product->auto_setup=='payment'?'selected':'' }}>{{ __('admin.products.auto_setup_payment') }}</option><option value="manual" {{ $product->auto_setup=='manual'?'selected':'' }}>{{ __('admin.products.auto_setup_manual') }}</option></select></div>
-                <div class="form-group"><label class="form-label">{{ __('admin.products.server_module') }}</label><input type="text" name="server_type" value="{{ $product->server_type }}" placeholder="{{ __('admin.products.module_placeholder') }}" class="form-control"></div>
+                <div class="form-group"><label class="form-label">{{ __('admin.products.server_module') }}</label>
+                    <select name="server_type" class="form-control">
+                        <option value="">{{ __('admin.products.server_module_none') }}</option>
+                        @foreach($serverModules as $key => $label)
+                        <option value="{{ $key }}" @selected(strtolower((string) $product->server_type) === $key)>{{ $label }}</option>
+                        @endforeach
+                    </select>
+                    <div style="color:#777;font-size:12px;margin-top:4px;">{{ __('admin.products.server_module_hint') }}</div>
+                </div>
+                <div class="form-group"><label class="form-label">{{ __('admin.products.server_group') }}</label>
+                    <select name="server_group_id" class="form-control">
+                        <option value="">{{ __('admin.products.server_group_any') }}</option>
+                        @foreach($serverGroups as $sg)
+                        <option value="{{ $sg->id }}" @selected((int) $product->server_group_id === (int) $sg->id)>{{ $sg->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.products.package') }}</label>
+                    <select name="package_name" id="package-select" class="form-control">
+                        <option value="">{{ __('admin.products.package_default') }}</option>
+                        @foreach(($packageList['packages'] ?? []) as $pkg)
+                        <option value="{{ $pkg['id'] }}" @selected(($selectedPackage ?? '') === $pkg['id'])>{{ $pkg['name'] }}</option>
+                        @endforeach
+                    </select>
+                    <div id="package-note" style="color:#777;font-size:12px;margin-top:4px;">
+                        {{ $packageList['error'] ?? __('admin.products.package_hint') }}
+                    </div>
+                </div>
                 <div class="form-group"><label class="form-label">{{ __('admin.products.stock_control') }}</label><div style="display:flex;gap:12px;align-items:center;"><label style="font-size:12px;"><input type="checkbox" name="stock_control" value="1" {{ $product->stock_control ? 'checked' : '' }}> {{ __('admin.products.stock_control_hint') }}</label><input type="number" min="0" name="stock_qty" value="{{ $product->stock_qty ?? 0 }}" class="form-control" style="max-width:120px;"></div></div>
                 <div class="form-group" x-data="{ show: '{{ $product->type }}' === 'ssl' }" x-show="show" x-cloak><label class="form-label">{{ __('admin.products.ssl_module') }}</label><select name="ssl_module" class="form-control"><option value="">{{ __('admin.products.ssl_none') }}</option><option value="gogetssl" {{ $product->ssl_module=='gogetssl'?'selected':'' }}>{{ __('admin.products.ssl_gogetssl') }}</option></select></div>
                 <div class="form-group" style="grid-column:span 2;"><label class="form-label">{{ __('common.form.description') }}</label><textarea name="description" rows="3" class="form-control">{{ $product->description }}</textarea></div>
@@ -87,6 +115,30 @@
                 <input type="text" name="panelica_plan_id" value="{{ $cfg['panelica_plan_id'] ?? '' }}" class="form-control" style="font-size:12px;" placeholder="d6875821-...">
                 @endif
             </div>
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label" style="font-size:12px;">App Hosting &mdash; install this app on provisioning and serve it on the customer's domain</label>
+                @if(!empty($panelicaTemplates))
+                <select name="panelica_app_template" class="form-control" style="font-size:12px;">
+                    <option value="">&mdash; none (regular web hosting) &mdash;</option>
+                    @foreach($panelicaTemplates as $tpl)
+                    <option value="{{ $tpl['slug'] }}" {{ (string)($cfg['panelica_app_template'] ?? '') === $tpl['slug'] ? 'selected' : '' }}>{{ $tpl['name'] }}</option>
+                    @endforeach
+                </select>
+                @else
+                <input type="text" name="panelica_app_template" value="{{ $cfg['panelica_app_template'] ?? '' }}" class="form-control" style="font-size:12px;" placeholder="wordpress">
+                @endif
+                <div style="font-size:11px;color:#888;margin-top:4px;">Needs Max Containers of at least 1 below. If the app cannot be installed the order fails and the account is rolled back.</div>
+            </div>
+            {{-- Selling ninety-eight apps as ninety-eight products does not
+                 scale, so one product can let the customer pick instead. --}}
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;">
+                <input type="checkbox" name="panelica_app_choose" value="1" {{ !empty($cfg['panelica_app_choose']) ? 'checked' : '' }}>
+                <strong>Customer picks the app</strong> &mdash; the order form shows the app catalogue instead of installing a fixed one
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;">
+                <input type="checkbox" name="panelica_container_plan" value="1" {{ !empty($cfg['panelica_container_plan']) ? 'checked' : '' }}>
+                <strong>Container plan</strong> &mdash; sells container resources, not a website: provisions without a domain and shows only the Apps tab
+            </label>
             @php $numFields = [
                 'res_cpu_percent'=>['CPU Limit (%) &mdash; 100 = 1 core',100],'res_memory_mb'=>['RAM (MB)',1024],
                 'res_inode_quota'=>['Inode Quota (-1 = unlimited)',-1],'res_iops'=>['IOPS (0 = unlimited)',0],
@@ -142,3 +194,39 @@
     </div>
 </form>
 @endsection
+
+@push('scripts')
+<script>
+(function () {
+    var moduleSelect = document.querySelector('select[name="server_type"]');
+    var packageSelect = document.getElementById('package-select');
+    var note = document.getElementById('package-note');
+    if (! moduleSelect || ! packageSelect) { return; }
+
+    moduleSelect.addEventListener('change', function () {
+        var chosen = packageSelect.value;
+        packageSelect.innerHTML = '<option value="">@lang('admin.products.package_loading')</option>';
+
+        fetch('{{ route('admin.products.packages') }}?module=' + encodeURIComponent(moduleSelect.value), {
+            headers: { 'Accept': 'application/json' }
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            packageSelect.innerHTML = '<option value="">@lang('admin.products.package_default')</option>';
+            (data.packages || []).forEach(function (p) {
+                var o = document.createElement('option');
+                o.value = p.id;
+                o.textContent = p.name;
+                if (p.id === chosen) { o.selected = true; }
+                packageSelect.appendChild(o);
+            });
+            note.textContent = data.error || '@lang('admin.products.package_hint')';
+        })
+        .catch(function () {
+            packageSelect.innerHTML = '<option value="">@lang('admin.products.package_default')</option>';
+            note.textContent = '@lang('admin.products.package_list_unreachable')';
+        });
+    });
+})();
+</script>
+@endpush

@@ -19,25 +19,72 @@
         <div class="pn-aff-lbl">{{ __('client.affiliates.signups') }}</div>
     </div>
     <div class="pn-card pn-aff-stat">
-        <div class="pn-aff-val" style="color:var(--success)">${{ number_format($stats["earnings"] ?? 0, 2) }}</div>
+        <div class="pn-aff-val" style="color:var(--success)">{{ money_fmt($stats["earnings"] ?? 0) }}</div>
         <div class="pn-aff-lbl">{{ __('client.affiliates.total_earnings') }}</div>
     </div>
     <div class="pn-card pn-aff-stat">
-        <div class="pn-aff-val" style="color:var(--warning)">${{ number_format($stats["pending"] ?? 0, 2) }}</div>
+        <div class="pn-aff-val" style="color:var(--warning)">{{ money_fmt($stats["pending"] ?? 0) }}</div>
         <div class="pn-aff-lbl">{{ __('client.affiliates.pending') }}</div>
     </div>
 </div>
 
+@if($affiliate)
 <div class="pn-card mb-24">
     <div class="pn-card-header"><span class="pn-card-title">{{ __('client.affiliates.referral_link') }}</span></div>
     <div class="pn-card-body">
         <p class="text-muted text-sm mb-16">{{ __('client.affiliates.referral_share_desc') }}</p>
         <div style="display:flex;gap:8px;max-width:520px">
-            <input type="text" id="refLink" class="form-control" value="{{ $referralLink ?? url("/") . "?ref=" . (auth()->user()->id ?? "") }}" readonly style="background:#f8fafc;font-size:13px">
+            <input type="text" id="refLink" class="form-control" value="{{ $referralLink }}" readonly style="background:var(--bg);font-size:13px">
             <button type="button" class="btn btn-primary" id="copyBtn" onclick="copyLink()" style="flex-shrink:0">{{ __('client.affiliates.copy_link') }}</button>
         </div>
     </div>
 </div>
+
+@if(($affiliate->balance ?? 0) > 0)
+<div class="pn-card mb-24">
+    <div class="pn-card-header"><span class="pn-card-title">{{ __('client.affiliates.withdraw') }}</span></div>
+    <div class="pn-card-body">
+        <p class="text-muted text-sm mb-16">
+            {{ __('client.affiliates.withdraw_desc', ['minimum' => money_fmt(\App\Models\Setting::get('AffiliateMinPayout', 25))]) }}
+        </p>
+        <form method="POST" action="{{ route('client.affiliates.withdraw') }}" style="display:flex;gap:8px;max-width:520px;align-items:flex-start">
+            @csrf
+            <div style="flex:1">
+                <input type="number" name="amount" step="0.01" min="0" max="{{ $affiliate->balance }}"
+                       value="{{ old('amount') }}" class="form-control" placeholder="0.00">
+                @error('amount')<div style="color:#c00;font-size:12px;margin-top:4px">{{ $message }}</div>@enderror
+            </div>
+            <button type="submit" class="btn btn-primary" style="flex-shrink:0">{{ __('client.affiliates.withdraw') }}</button>
+        </form>
+
+        <hr style="margin:16px 0;">
+
+        <p class="text-muted text-sm mb-16">
+            {{ __('client.affiliates.add_to_balance_desc') }}
+        </p>
+        <form method="POST" action="{{ route('client.affiliates.toBalance') }}" style="display:flex;gap:8px;max-width:520px;align-items:flex-start">
+            @csrf
+            <div style="flex:1">
+                <input type="number" name="amount" step="0.01" min="0.01" max="{{ $affiliate->balance }}"
+                       value="{{ old('amount') }}" class="form-control" placeholder="0.00">
+            </div>
+            <button type="submit" class="btn btn-primary" style="flex-shrink:0">{{ __('client.affiliates.add_to_balance') }}</button>
+        </form>
+    </div>
+</div>
+@endif
+@else
+<div class="pn-card mb-24">
+    <div class="pn-card-header"><span class="pn-card-title">{{ __('client.affiliates.join_title') }}</span></div>
+    <div class="pn-card-body">
+        <p class="text-muted text-sm mb-16">{{ __('client.affiliates.join_desc') }}</p>
+        <form method="POST" action="{{ route('client.affiliates.activate') }}">
+            @csrf
+            <button type="submit" class="btn btn-primary">{{ __('client.affiliates.join_button') }}</button>
+        </form>
+    </div>
+</div>
+@endif
 
 <div class="pn-card">
     <div class="pn-card-header"><span class="pn-card-title">{{ __('client.affiliates.commission_history') }}</span></div>
@@ -55,11 +102,11 @@
             <tbody>
                 @forelse($commissions ?? [] as $comm)
                 <tr>
-                    <td class="text-muted text-sm">{{ $comm->created_at?->format(date_fmt()) }}</td>
-                    <td>{{ $comm->referredClient->email ?? "-" }}</td>
-                    <td style="text-transform:capitalize">{{ $comm->type ?? "signup" }}</td>
-                    <td style="font-weight:700;color:var(--success)">${{ number_format($comm->amount, 2) }}</td>
-                    <td><span class="badge badge-{{ strtolower($comm->status ?? "pending") }}">{{ ucfirst($comm->status ?? "pending") }}</span></td>
+                    <td class="text-muted text-sm">{{ $comm->date?->format(date_fmt()) ?? "-" }}</td>
+                    <td>{{ $comm->invoice?->client?->full_name ?? "-" }}</td>
+                    <td style="text-transform:capitalize">{{ __('client.affiliates.commission') }}</td>
+                    <td style="font-weight:700;color:var(--success)">{{ money_fmt(($comm->amount_in ?? 0) > 0 ? $comm->amount_in : $comm->amount_out) }}</td>
+                    <td><span class="badge badge-success">{{ __('client.affiliates.credited') }}</span></td>
                 </tr>
                 @empty
                 <tr>

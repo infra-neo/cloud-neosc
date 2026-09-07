@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\HomepageContent;
 use App\Models\HomepageSection;
+use App\Models\Language;
 use App\Models\Setting;
 use App\Services\ThemeManager;
 use App\Services\ThemeService;
@@ -16,20 +17,130 @@ class SettingController extends Controller
     public function general()
     {
         $settings = Setting::where('group', 'general')->pluck('value', 'setting');
-        return view('admin.settings.general', compact('settings'));
+
+        $invoiceService = app(\App\Services\InvoiceService::class);
+        $proformaFormat = trim((string) ($settings['ProformaNumberFormat'] ?? 'PRO-{year}/{month}-{num}'));
+        $proformaFormat = $proformaFormat !== '' ? $proformaFormat : 'PRO-{year}/{month}-{num}';
+        $proformaLast = \App\Models\Invoice::where('invoice_num', 'like', 'PRO-%')->orderBy('id', 'desc')->value('invoice_num');
+        $proformaSeq = 1 + (int) \App\Models\Invoice::where('invoice_num', 'like', 'PRO-%')
+            ->selectRaw('MAX(CAST(REGEXP_REPLACE(invoice_num, "^.*[^0-9]", "") AS UNSIGNED)) as seq')
+            ->value('seq');
+
+        return view('admin.settings.general', [
+            'settings' => $settings,
+            'mailTransport' => (string) config('mail.default'),
+            'languages' => Language::active()->orderBy('sort_order')->get(),
+            'countries' => \App\Support\Countries::all(),
+            'paymentMethods' => $this->paymentMethods(),
+            'invoicePreview' => $invoiceService->generateInvoiceNumber(),
+            'invoiceNextSeq' => $invoiceService->nextInvoiceSequence(),
+            'invoiceLast' => \App\Models\Invoice::where('invoice_num', '!=', '')->orderBy('id', 'desc')->value('invoice_num'),
+            'proformaEnabled' => ($settings['ProformaEnabled'] ?? '0') === '1',
+            'proformaFormat' => $proformaFormat,
+            'proformaPreview' => $invoiceService->renderInvoiceNumber($proformaFormat, $proformaSeq),
+            'proformaLast' => $proformaLast,
+        ]);
     }
+
+    /**
+     * Payment methods the default can be picked from: every usable gateway
+     * plus the offline options offered on the invoice form.
+     *
+     * @return array<int, string>
+     */
+    protected function paymentMethods(): array
+    {
+        $gateways = app(\App\Services\Module\ModuleRegistry::class)->usableGateways();
+
+        if (! in_array('banktransfer', $gateways, true)) {
+            $gateways[] = 'banktransfer';
+        }
+
+        $gateways[] = 'manual';
+
+        return $gateways;
+    }
+
+    /**
+     * The settings this form owns.
+     *
+     * Anything else in the request is ignored. It used to be stored, so a
+     * stray field became a setting of its own, and a field named after a
+     * setting belonging to another screen was overwritten and moved into
+     * "general" - Setting::set() writes the group as well as the value, and
+     * the screen that owns it looks it up by group.
+     */
+    private const GENERAL_KEYS = [
+        'ActiveClientAreaTemplate', 'Address', 'AdminDir', 'CompanyCity', 'CompanyName',
+        'Country', 'DateFormat', 'DefaultLanguage', 'DefaultPaymentMethod', 'Domain',
+        'DefaultNameserver1', 'DefaultNameserver2', 'DefaultNameserver3', 'DefaultNameserver4', 'DefaultNameserver5',
+        'Email', 'EmailFromName',
+        'InvoiceNumberFormat', 'InvoiceNumberYearlyReset', 'InvoiceDueDays',
+        'AutoSuspensionDays', 'AutoTerminationDays', 'AutoTerminationEnabled',
+        'FraudLabsApiKey', 'FraudLabsEnabled',
+        'MaxMindAccountId', 'MaxMindEnabled', 'MaxMindLicenseKey',
+        'TwilioAccountSid', 'TwilioAuthToken', 'TwilioVerifyEnabled', 'TwilioVerifyServiceSid',
+        'ProformaEnabled', 'ProformaNumberFormat', 'HidePaidProformas',
+        'LateFeeAmount', 'LateFeeMinDays', 'LateFeeType',
+        'MailEnabled', 'MailType', 'MaintenanceMode', 'OrderFormDisplayedOn', 'PhoneNumber',
+        'SMTPHost', 'SMTPPassword', 'SMTPPort', 'SMTPSecurity', 'SMTPUsername',
+        'PrivacyUrl', 'SystemEmailAddress', 'TaxID', 'Timezone', 'TOSUrl',
+        // Saved from the languages screen, which posts to this same endpoint.
+        // Its form used to name these settings[OpenAIApiKey] - a shape this
+        // handler never reads - so pressing save wrote nothing and said nothing.
+        'OpenAIApiKey', 'OpenAIModel',
+    ];
 
     public function updateGeneral(Request $request)
     {
-        $mailKeys = [
-            'MailType', 'SMTPHost', 'SMTPPort', 'SMTPUsername', 'SMTPPassword',
-            'SMTPSecurity', 'SystemEmailAddress', 'EmailFromName', 'MailEnabled',
-        ];
+        $data = $request->only(self::GENERAL_KEYS);
 
-        $data = $request->except('_token');
-
-        if (!isset($data['MailEnabled'])) {
+        // An unticked checkbox is absent from the request, not false.
+        if (! isset($data['MailEnabled'])) {
             $data['MailEnabled'] = '0';
+        }
+        if (! isset($data['InvoiceNumberYearlyReset'])) {
+            $data['InvoiceNumberYearlyReset'] = '0';
+        }
+        if (! isset($data['AutoTerminationEnabled'])) {
+            $data['AutoTerminationEnabled'] = '0';
+        }
+        if (! isset($data['MaxMindEnabled'])) {
+            $data['MaxMindEnabled'] = '0';
+        }
+        if (! isset($data['FraudLabsEnabled'])) {
+            $data['FraudLabsEnabled'] = '0';
+        }
+        if (! isset($data['TwilioVerifyEnabled'])) {
+            $data['TwilioVerifyEnabled'] = '0';
+        }
+        if (! isset($data['ProformaEnabled'])) {
+            $data['ProformaEnabled'] = '0';
+        }
+        if (! isset($data['HidePaidProformas'])) {
+            $data['HidePaidProformas'] = '0';
+        }
+
+        // The form never carries the stored mail password back, so an empty
+        // field means the operator did not touch it - not that they want the
+        // mail account to stop working.
+        if (trim((string) ($data['SMTPPassword'] ?? '')) === '') {
+            unset($data['SMTPPassword']);
+        }
+
+        // Same contract as the mail password: a secret field left blank means
+        // "keep what I have", not "delete my key".
+        if (trim((string) ($data['OpenAIApiKey'] ?? '')) === '') {
+            unset($data['OpenAIApiKey']);
+        }
+        if (trim((string) ($data['MaxMindLicenseKey'] ?? '')) === '') {
+            unset($data['MaxMindLicenseKey']);
+        }
+        if (trim((string) ($data['FraudLabsApiKey'] ?? '')) === '') {
+            unset($data['FraudLabsApiKey']);
+        }
+        if (trim((string) ($data['TwilioAuthToken'] ?? '')) === '') {
+            unset($data['TwilioAuthToken']);
         }
 
         foreach ($data as $key => $value) {
@@ -54,29 +165,13 @@ class SettingController extends Controller
             ]);
         }
 
-        $mailType = $settings['MailType'] ?? 'php_mail';
-        $fromAddress = $settings['SystemEmailAddress'] ?? 'noreply@example.com';
-        $fromName    = $settings['EmailFromName'] ?? 'PNLCS';
+        // The same resolver the application boots with. This used to be a
+        // second copy that handled PHP mail when the real one did not, so the
+        // button could succeed down a road no real email ever travelled.
+        $transport = \App\Support\MailTransport::configure();
 
-        if ($mailType === 'smtp') {
-            $encryption = ($settings['SMTPSecurity'] ?? 'tls') === 'none' ? null : ($settings['SMTPSecurity'] ?? 'tls');
-            config([
-                'mail.default'                     => 'smtp',
-                'mail.mailers.smtp.host'            => $settings['SMTPHost'] ?? 'localhost',
-                'mail.mailers.smtp.port'            => (int)($settings['SMTPPort'] ?? 587),
-                'mail.mailers.smtp.username'        => $settings['SMTPUsername'] ?? null,
-                'mail.mailers.smtp.password'        => $settings['SMTPPassword'] ?? null,
-                'mail.mailers.smtp.encryption'      => $encryption,
-                'mail.from.address'                 => $fromAddress,
-                'mail.from.name'                    => $fromName,
-            ]);
-        } else {
-            config([
-                'mail.default'          => 'sendmail',
-                'mail.from.address'     => $fromAddress,
-                'mail.from.name'        => $fromName,
-            ]);
-        }
+        $fromAddress = $settings['SystemEmailAddress'] ?? 'noreply@example.com';
+        $fromName = $settings['EmailFromName'] ?? 'PNLCS';
 
         try {
             Mail::raw(__('messages.email.test_body'), function ($message) use ($toAddress, $fromAddress, $fromName) {
@@ -87,7 +182,11 @@ class SettingController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => __('messages.email.test_sent', ['address' => $toAddress]),
+                // Which road it went down. "log" means it went into a file and
+                // nobody received it, which is worth saying out loud.
+                'transport' => $transport,
+                'message' => __('messages.email.test_sent', ['address' => $toAddress])
+                    .' ('.__('admin.settings.sending_via', ['transport' => $transport]).')',
             ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -100,7 +199,9 @@ class SettingController extends Controller
     public function myAccount()
     {
         $admin = auth("admin")->user();
-        return view("admin.settings.my-account", compact("admin"));
+        $languages = Language::active()->orderBy('sort_order')->get();
+
+        return view("admin.settings.my-account", compact("admin", "languages"));
     }
 
     public function updateMyAccount(Request $request)
@@ -112,16 +213,23 @@ class SettingController extends Controller
             "last_name"    => "required|string|max:100",
             "email"        => "required|email|unique:admins,email," . $admin->id,
             "signature"    => "nullable|string|max:1000",
+            'language' => 'required|string|exists:languages,code',
             "new_password" => "nullable|min:8|confirmed",
         ]);
 
-        $data = $request->only(["first_name", "last_name", "email", "signature"]);
+        if (! Language::where('code', $request->language)->where('is_active', true)->exists()) {
+            return back()->withErrors(['language' => __('admin.settings.language_unavailable')])->withInput();
+        }
+
+        $data = $request->only(["first_name", "last_name", "email", "signature", "language"]);
 
         if ($request->filled("new_password")) {
             $data["password"] = bcrypt($request->new_password);
         }
 
         $admin->update($data);
+        $request->session()->put('locale', $data['language']);
+        cookie()->queue('pnlcs_locale', $data['language'], 43200);
 
         return back()->with("success", __("admin.messages.account_updated"));
     }
@@ -450,15 +558,36 @@ class SettingController extends Controller
             'remove_branding' => 'sometimes|boolean',
         ]);
 
-        Setting::set('whitelabel_company_name', $request->input('company_name', ''), 'whitelabel');
-        Setting::set('whitelabel_company_url', $request->input('company_url', ''), 'whitelabel');
-        Setting::set('whitelabel_support_email', $request->input('support_email', ''), 'whitelabel');
-        Setting::set('whitelabel_copyright', $request->input('copyright', ''), 'whitelabel');
-        Setting::set('whitelabel_remove_branding', $request->input('remove_branding', '0'), 'whitelabel');
+        // Only what was submitted. Reading every field with a default of '' meant
+        // a form carrying one input silently blanked the other four, so the
+        // company name could not be offered anywhere except inside this one
+        // form - and it is the field people look for first.
+        $fields = [
+            'company_name'    => 'whitelabel_company_name',
+            'company_url'     => 'whitelabel_company_url',
+            'support_email'   => 'whitelabel_support_email',
+            'copyright'       => 'whitelabel_copyright',
+        ];
+
+        foreach ($fields as $input => $setting) {
+            if ($request->has($input)) {
+                Setting::set($setting, (string) $request->input($input, ''), 'whitelabel');
+            }
+        }
+
+        // An unticked checkbox sends nothing, so this one is decided by whether
+        // its own form was the one submitted rather than by presence.
+        if ($request->has('whitelabel_full_form')) {
+            Setting::set('whitelabel_remove_branding', $request->input('remove_branding', '0'), 'whitelabel');
+        }
 
         ThemeService::clearCache();
 
-        return back()->with('success', __('messages.success.whitelabel_saved'));
+        // Back to the tab the form lives on, not to whichever one the page opens
+        // with: saving and being returned to a different screen reads as nothing
+        // having happened.
+        return back()->with('success', __('messages.success.whitelabel_saved'))
+            ->with('appearance_tab', $request->input('return_tab', 'whitelabel'));
     }
 
     // ═══════════════════════════════════════════════════════

@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Service;
+use App\Mail\Concerns\LocalizesToRecipient;
 use App\Models\Setting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -14,10 +15,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class ServiceWelcomeMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public Service $service
-    ) {}
+    ) {
+        $this->localizeTo($this->service);
+    }
 
     public function envelope(): Envelope
     {
@@ -28,11 +32,33 @@ class ServiceWelcomeMail extends Mailable implements ShouldQueue
 
     public function content(): Content
     {
+        $server = $this->service->server;
+        $host = $server?->hostname ?: $server?->ip_address;
+
+        // Only claimed when the product actually grants it. A managed product
+        // carries res_ssh_level (none/jailed/full); anything else is left out
+        // rather than promising an access the account does not have.
+        $sshLevel = $this->service->product?->config_options['res_ssh_level'] ?? null;
+        if (! in_array($sshLevel, ['jailed', 'full'], true)) {
+            $sshLevel = null;
+        }
+
         return new Content(
             view: 'emails.service-welcome',
             with: [
                 'service' => $this->service,
-                'companyName' => Setting::get('CompanyName', 'PNLCS'),
+                'companyName' => company_name(),
+                // Access details. The control panel URL is the reliable front
+                // door (same host:port this system talks to); the password is
+                // the provisioning password, decrypted by the model cast.
+                'panelUrl' => $host && $server?->port ? "https://{$host}:{$server->port}" : null,
+                'accessHost' => $host,
+                'password' => $this->service->password,
+                'sshLevel' => $sshLevel,
+                'nameservers' => array_values(array_filter([
+                    $server?->nameserver1, $server?->nameserver2,
+                    $server?->nameserver3, $server?->nameserver4,
+                ])),
             ],
         );
     }

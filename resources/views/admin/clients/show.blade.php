@@ -28,7 +28,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
             <strong style="font-size:13px;">{{ __('admin.clients.credit_balance') }}:</strong>
-            <span style="color:#3c763d;font-weight:600;">${{ number_format($client->credit, 2) }}</span>
+            <span style="color:#3c763d;font-weight:600;">{{ money_fmt($client->credit) }}</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
             <strong style="font-size:13px;">{{ __('admin.clients.tax_exempt') }}:</strong>
@@ -43,7 +43,7 @@
     <div class="stat-card"><div class="stat-value">{{ $domainCount }}</div><div class="stat-label">{{ __('admin.clients.domains') }}</div></div>
     <div class="stat-card"><div class="stat-value">{{ $invoiceCount }}</div><div class="stat-label">{{ __('admin.clients.invoices') }}</div></div>
     <div class="stat-card"><div class="stat-value">{{ $ticketCount }}</div><div class="stat-label">{{ __('admin.clients.tickets') }}</div></div>
-    <div class="stat-card" style="border-color:#d9534f;"><div class="stat-value" style="color:#d9534f;">${{ number_format($unpaidInvoices, 2) }}</div><div class="stat-label">{{ __('admin.clients.unpaid') }}</div></div>
+    <div class="stat-card" style="border-color:#d9534f;"><div class="stat-value" style="color:#d9534f;">{{ money_fmt($unpaidInvoices) }}</div><div class="stat-label">{{ __('admin.clients.unpaid') }}</div></div>
 </div>
 
 {{-- Tab Navigation --}}
@@ -72,14 +72,28 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
                 <table style="width:100%;font-size:13px;border-collapse:collapse;">
                     <tr><td style="padding:5px 0;color:#777;width:40%;">{{ __('admin.clients.name') }}</td><td style="padding:5px 0;font-weight:600;">{{ $client->full_name }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.company') }}</td><td style="padding:5px 0;">{{ $client->company_name ?: '-' }}</td></tr>
+                    <tr><td style="padding:5px 0;color:#777;">{{ __('common.form.tax_id') }}</td><td style="padding:5px 0;">{{ $client->tax_id ?: '-' }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.email') }}</td><td style="padding:5px 0;"><a href="mailto:{{ $client->email }}" style="color:#337ab7;">{{ $client->email }}</a></td></tr>
-                    <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.phone') }}</td><td style="padding:5px 0;">{{ $client->phone_number ?: '-' }}</td></tr>
+                    <tr><td style="padding:5px 0;color:#777;">{{ __('common.form.billing_email') }}</td><td style="padding:5px 0;">@if($client->billing_email)<a href="mailto:{{ $client->billing_email }}" style="color:#337ab7;">{{ $client->billing_email }}</a>@else - @endif</td></tr>
+                    <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.phone') }}</td><td style="padding:5px 0;">{{ $client->full_phone ?: '-' }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.address') }}</td><td style="padding:5px 0;">{{ $client->address1 ?: '-' }}@if($client->city)<br>{{ $client->city }}{{ $client->state ? ', '.$client->state : '' }} {{ $client->postcode }}@endif</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.country') }}</td><td style="padding:5px 0;">{{ $client->country ?: '-' }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.registered') }}</td><td style="padding:5px 0;">{{ $client->created_at->format(date_fmt()) }}</td></tr>
                 </table>
             </div>
         </div>
+        @if($customFields->isNotEmpty())
+        <div class="panel" style="margin-top:10px;">
+            <div class="panel-heading panel-primary">{{ __('admin.clients.custom_fields') }}</div>
+            <div class="panel-body">
+                <table style="width:100%;font-size:13px;border-collapse:collapse;">
+                    @foreach($customFields as $field)
+                    <tr><td style="padding:5px 0;color:#777;width:40%;">{{ $field->field_name }}</td><td style="padding:5px 0;font-weight:600;">{{ $field->values->first()?->value ?: '-' }}</td></tr>
+                    @endforeach
+                </table>
+            </div>
+        </div>
+        @endif
     </div>
 
     {{-- Column 2 --}}
@@ -98,7 +112,7 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.unpaid_invoices') }}</td><td style="padding:5px 0;font-weight:600;color:#f0ad4e;">{{ $unpaid }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.overdue_invoices') }}</td><td style="padding:5px 0;font-weight:600;color:#d9534f;">{{ $ovrd }}</td></tr>
                     <tr><td style="padding:5px 0;color:#777;">{{ __('admin.clients.total_invoices') }}</td><td style="padding:5px 0;font-weight:600;">{{ $invoiceCount }}</td></tr>
-                    <tr style="border-top:1px solid #eee;"><td style="padding:8px 0 5px;color:#777;">{{ __('admin.clients.credit_balance') }}</td><td style="padding:8px 0 5px;font-weight:600;color:#5cb85c;">${{ number_format($client->credit, 2) }}</td></tr>
+                    <tr style="border-top:1px solid #eee;"><td style="padding:8px 0 5px;color:#777;">{{ __('admin.clients.credit_balance') }}</td><td style="padding:8px 0 5px;font-weight:600;color:#5cb85c;">{{ money_fmt($client->credit) }}</td></tr>
                 </table>
             </div>
         </div>
@@ -154,6 +168,117 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
 </div>
 
 @elseif($tab === 'services')
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-weight:600;">{{ __('admin.clients.tab_services') }}</div>
+    <button type="button" class="btn btn-primary btn-sm" onclick="var f=document.getElementById('add-service-form');f.style.display=f.style.display==='none'?'block':'none';">{{ __('admin.clients.add_service') }}</button>
+</div>
+
+<div class="card" id="add-service-form" style="display:none;margin-bottom:16px;">
+    <div class="card-header"><strong>{{ __('admin.clients.add_service') }}</strong></div>
+    <div class="card-body">
+        <p class="text-muted" style="font-size:12px;margin-bottom:14px;">{{ __('admin.clients.add_service_hint') }}</p>
+        @if($errors->any())
+        <div class="alert alert-danger" style="font-size:13px;">{{ $errors->first() }}</div>
+        @endif
+        <form method="POST" action="{{ route('admin.clients.services.store', $client) }}">
+            @csrf
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.product') }} <span style="color:#d9534f;">*</span></label>
+                    <select name="product_id" class="form-control" required>
+                        <option value="">—</option>
+                        @foreach($products as $p)
+                        <option value="{{ $p->id }}" @selected(old('product_id')==$p->id)>{{ $p->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.service_server') }}</label>
+                    <select name="server_id" id="svc-server" class="form-control">
+                        <option value="">{{ __('admin.clients.service_no_server') }}</option>
+                        @foreach($servers as $s)
+                        <option value="{{ $s->id }}" @selected(old('server_id')==$s->id)>{{ $s->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.domain') }}</label>
+                    <input type="text" name="domain" value="{{ old('domain') }}" class="form-control" placeholder="example.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.billing_cycle') }} <span style="color:#d9534f;">*</span></label>
+                    <select name="billing_cycle" class="form-control" required>
+                        @foreach(['Monthly','Quarterly','Semi-Annually','Annually','Biennially','Triennially','One-Time'] as $c)
+                        <option value="{{ $c }}" @selected(old('billing_cycle')==$c)>{{ $c }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.amount') }} <span style="color:#d9534f;">*</span></label>
+                    <input type="number" step="0.01" min="0" name="amount" value="{{ old('amount', '0.00') }}" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.next_due') }}</label>
+                    <input type="date" name="next_due_date" value="{{ old('next_due_date') }}" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.status') }} <span style="color:#d9534f;">*</span></label>
+                    <select name="status" class="form-control" required>
+                        <option value="active" @selected(old('status','active')=='active')>Active</option>
+                        <option value="pending" @selected(old('status')=='pending')>Pending</option>
+                        <option value="suspended" @selected(old('status')=='suspended')>Suspended</option>
+                        <option value="cancelled" @selected(old('status')=='cancelled')>Cancelled</option>
+                        <option value="terminated" @selected(old('status')=='terminated')>Terminated</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group" id="link-account-row" style="margin-top:12px;display:none;">
+                <label class="form-label">{{ __('admin.clients.link_existing') }}</label>
+                <select name="link_user_id" id="link-user-id" class="form-control">
+                    <option value="">{{ __('admin.clients.link_none') }}</option>
+                </select>
+                <div class="text-muted" style="font-size:12px;margin-top:4px;">{{ __('admin.clients.link_existing_hint') }}</div>
+            </div>
+            <label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" name="provision" value="1" id="svc-provision" {{ old('provision') ? 'checked' : '' }} style="margin-top:3px;">
+                <span><strong>{{ __('admin.clients.provision_now') }}</strong><br><span class="text-muted" style="font-size:12px;">{{ __('admin.clients.provision_now_hint') }}</span></span>
+            </label>
+            <button type="submit" class="btn btn-primary btn-sm" style="margin-top:12px;">{{ __('admin.clients.add_service') }}</button>
+        </form>
+        <script>
+        (function () {
+            var srv = document.getElementById('svc-server'),
+                link = document.getElementById('link-user-id'),
+                row = document.getElementById('link-account-row'),
+                prov = document.getElementById('svc-provision');
+            if (!srv || !link || !row) return;
+            var base = "{{ url('admin/servers') }}";
+            function toggleRow() { row.style.display = (prov && prov.checked) ? 'none' : (srv.value ? 'block' : 'none'); }
+            function loadAccounts() {
+                link.innerHTML = '<option value="">{{ __('admin.clients.link_none') }}</option>';
+                if (!srv.value) { toggleRow(); return; }
+                fetch(base + '/' + srv.value + '/accounts', {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        (d.accounts || []).forEach(function (a) {
+                            var o = document.createElement('option');
+                            o.value = a.id;
+                            o.textContent = a.username + (a.email ? ' (' + a.email + ')' : '') + (a.status && a.status !== 'active' ? ' — ' + a.status : '');
+                            link.appendChild(o);
+                        });
+                    })
+                    .catch(function () {});
+                toggleRow();
+            }
+            srv.addEventListener('change', loadAccounts);
+            if (prov) prov.addEventListener('change', toggleRow);
+            if (srv.value) loadAccounts();
+        })();
+        </script>
+    </div>
+</div>
+
 <div class="card">
     @if($services->isEmpty())
     <div class="card-body" style="text-align:center;color:#999;padding:40px;">{{ __('admin.services.no_services') }}</div>
@@ -168,7 +293,7 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
             <td><a href="{{ route('admin.services.show', $service) }}" style="color:#337ab7;">{{ $service->product?->name ?? 'N/A' }}</a></td>
             <td>{{ $service->domain ?? '-' }}</td>
             <td>{{ $service->billing_cycle }}</td>
-            <td>${{ number_format($service->amount, 2) }}</td>
+            <td>{{ money_fmt($service->amount) }}</td>
             <td>{{ $service->next_due_date?->format(date_fmt()) ?? '-' }}</td>
             <td><span class="badge-{{ strtolower($service->status) }}">{{ ucfirst($service->status) }}</span></td>
         </tr>
@@ -180,22 +305,86 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
 </div>
 
 @elseif($tab === 'domains')
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-weight:600;">{{ __('admin.clients.tab_domains') }}</div>
+    <button type="button" class="btn btn-primary btn-sm" onclick="var f=document.getElementById('add-domain-form');f.style.display=f.style.display==='none'?'block':'none';">{{ __('admin.clients.add_domain') }}</button>
+</div>
+
+<div class="card" id="add-domain-form" style="display:none;margin-bottom:16px;">
+    <div class="card-header"><strong>{{ __('admin.clients.add_domain') }}</strong></div>
+    <div class="card-body">
+        <p class="text-muted" style="font-size:12px;margin-bottom:14px;">{{ __('admin.clients.add_domain_hint') }}</p>
+        @if($errors->any())
+        <div class="alert alert-danger" style="font-size:13px;">{{ $errors->first() }}</div>
+        @endif
+        <form method="POST" action="{{ route('admin.clients.domains.store', $client) }}">
+            @csrf
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.domain') }} <span style="color:#d9534f;">*</span></label>
+                    <input type="text" name="domain" value="{{ old('domain') }}" class="form-control" placeholder="example.com" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.domain_registrar') }}</label>
+                    <input type="text" name="registrar" value="{{ old('registrar') }}" class="form-control" placeholder="{{ __('admin.clients.domain_registrar_placeholder') }}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.registered') }}</label>
+                    <input type="date" name="registration_date" value="{{ old('registration_date') }}" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.domains.expiry_date') }}</label>
+                    <input type="date" name="expiry_date" value="{{ old('expiry_date') }}" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.next_due') }}</label>
+                    <input type="date" name="next_due_date" value="{{ old('next_due_date') }}" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.domain_recurring') }} <span style="color:#d9534f;">*</span></label>
+                    <input type="number" step="0.01" min="0" name="recurring_amount" value="{{ old('recurring_amount', '0.00') }}" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.clients.domain_first_payment') }}</label>
+                    <input type="number" step="0.01" min="0" name="first_payment_amount" value="{{ old('first_payment_amount') }}" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('common.table.status') }} <span style="color:#d9534f;">*</span></label>
+                    <select name="status" class="form-control" required>
+                        <option value="active" @selected(old('status','active')=='active')>Active</option>
+                        <option value="grace" @selected(old('status')=='grace')>Grace</option>
+                        <option value="pending" @selected(old('status')=='pending')>Pending</option>
+                        <option value="expired" @selected(old('status')=='expired')>Expired</option>
+                        <option value="cancelled" @selected(old('status')=='cancelled')>Cancelled</option>
+                    </select>
+                </div>
+            </div>
+            <p class="text-muted" style="font-size:12px;margin-top:10px;">{{ __('admin.clients.add_domain_renewal_note') }}</p>
+            <button type="submit" class="btn btn-primary btn-sm" style="margin-top:6px;">{{ __('admin.clients.add_domain') }}</button>
+        </form>
+    </div>
+</div>
+
 <div class="card">
     @if($domains->isEmpty())
     <div class="card-body" style="text-align:center;color:#999;padding:40px;">{{ __('admin.domains.no_domains') }}</div>
     @else
     <table class="data-table">
         <thead><tr>
-            <th>{{ __('common.table.domain') }}</th><th>{{ __('common.table.registrar') }}</th><th>{{ __('admin.clients.registered') }}</th><th>{{ __('admin.domains.expiry_date') }}</th><th>{{ __('common.table.status') }}</th>
+            <th>{{ __('common.table.domain') }}</th><th>{{ __('common.table.registrar') }}</th><th>{{ __('admin.clients.registered') }}</th><th>{{ __('admin.domains.expiry_date') }}</th><th>{{ __('common.table.status') }}</th><th style="text-align:right;">{{ __('common.table.actions') }}</th>
         </tr></thead>
         <tbody>
         @foreach($domains as $domain)
         <tr>
-            <td style="font-weight:600;">{{ $domain->domain }}</td>
+            <td style="font-weight:600;"><a href="{{ route('admin.domains.show', $domain) }}" style="text-decoration:none;color:inherit;">{{ $domain->domain }}</a></td>
             <td>{{ $domain->registrar ?? '-' }}</td>
             <td>{{ $domain->registration_date?->format(date_fmt()) ?? '-' }}</td>
             <td>{{ $domain->expiry_date?->format(date_fmt()) ?? '-' }}</td>
             <td><span class="badge-{{ strtolower($domain->status) }}">{{ ucfirst($domain->status) }}</span></td>
+            <td style="text-align:right;">
+                <a href="{{ route('admin.domains.show', $domain) }}" class="btn btn-default btn-xs">{{ __('common.actions.view') }}</a>
+            </td>
         </tr>
         @endforeach
         </tbody>
@@ -219,8 +408,8 @@ $tabs = ['summary'=>__('admin.clients.tab_summary'),'services'=>__('admin.client
             <td><a href="{{ route('admin.invoices.show', $inv) }}" style="color:#337ab7;">{{ $inv->invoice_num }}</a></td>
             <td>{{ $inv->date?->format(date_fmt()) ?? '-' }}</td>
             <td>{{ $inv->due_date?->format(date_fmt()) ?? '-' }}</td>
-            <td style="font-weight:600;">${{ number_format($inv->total, 2) }}</td>
-            <td><span class="badge-{{ strtolower($inv->status) }}">{{ ucfirst($inv->status) }}</span></td>
+            <td style="font-weight:600;">{{ money_fmt($inv->total) }}</td>
+            <td><span class="badge-{{ strtolower($inv->status) }}">{{ invoice_status_label($inv->status) }}</span></td>
         </tr>
         @endforeach
         </tbody>

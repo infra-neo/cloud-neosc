@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Service;
+use App\Mail\Concerns\LocalizesToRecipient;
 use App\Models\Setting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -14,10 +15,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class ServiceUnsuspensionMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public Service $service
-    ) {}
+    ) {
+        $this->localizeTo($this->service);
+    }
 
     public function envelope(): Envelope
     {
@@ -32,7 +36,7 @@ class ServiceUnsuspensionMail extends Mailable implements ShouldQueue
             view: 'emails.service-unsuspension',
             with: [
                 'service' => $this->service,
-                'companyName' => Setting::get('CompanyName', 'PNLCS'),
+                'companyName' => company_name(),
             ],
         );
     }

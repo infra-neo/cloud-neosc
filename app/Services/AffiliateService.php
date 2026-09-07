@@ -8,6 +8,7 @@ use App\Models\Client;
 use App\Models\Invoice;
 use App\Models\Setting;
 use App\Models\Transaction;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -47,17 +48,67 @@ class AffiliateService
         $affiliate->decrement('balance', $amount);
         $affiliate->increment('withdrawn', $amount);
 
+        // The ledger the admin screens count from. It existed and nothing had
+        // ever written a row to it.
+        DB::table('affiliate_withdrawals')->insert([
+            'affiliate_id' => $affiliate->id,
+            'date' => now(),
+            'amount' => $amount,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         Transaction::create([
             'client_id' => $affiliate->client_id,
             'gateway' => 'affiliate_payout',
             'transaction_id' => 'AFF-'.strtoupper(uniqid()),
             'amount_in' => 0,
             'amount_out' => $amount,
-            'description' => "Affiliate withdrawal - \${$amount}",
+            'description' => 'Affiliate withdrawal - '.money_fmt($amount),
             'date' => now(),
         ]);
 
         return true;
+    }
+
+    /**
+     * Move money out of the affiliate balance and into the client's account
+     * credit. The affiliate keeps what they earned — it is just held as store
+     * credit instead of being paid out in cash.
+     */
+    public function convertToCredit(Affiliate $affiliate, float $amount): bool
+    {
+        if ($amount <= 0) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($affiliate, $amount) {
+            $affiliate = Affiliate::whereKey($affiliate->id)->lockForUpdate()->first();
+            if (! $affiliate || $affiliate->balance < $amount) {
+                return false;
+            }
+
+            $client = $affiliate->client;
+            if (! $client) {
+                return false;
+            }
+
+            $affiliate->decrement('balance', $amount);
+            $affiliate->increment('withdrawn', $amount);
+            $client->increment('credit', $amount);
+
+            Transaction::create([
+                'client_id' => $affiliate->client_id,
+                'gateway' => 'affiliate_payout',
+                'transaction_id' => 'AFFCR-'.strtoupper(uniqid()),
+                'amount_in' => 0,
+                'amount_out' => $amount,
+                'description' => 'Affiliate balance added to account credit - '.money_fmt($amount),
+                'date' => now(),
+            ]);
+
+            return true;
+        });
     }
 
     /**
@@ -96,8 +147,17 @@ class AffiliateService
             }
         }
 
-        // Calculate commission
-        $commission = $this->calculateCommission($affiliate, (float) $invoice->total);
+        // What was actually sold. Not the invoice total: that carries tax,
+        // which belongs to the tax authority, and it counts an Add Funds line
+        // as revenue - so a hundred put on account earned a commission on the
+        // way in and another one when it was spent on hosting.
+        $base = $this->commissionBase($invoice);
+
+        if ($base <= 0) {
+            return;
+        }
+
+        $commission = $this->calculateCommission($affiliate, $base);
         if ($commission <= 0) {
             return;
         }
@@ -128,24 +188,36 @@ class AffiliateService
      */
     public function reverseCommission(Invoice $invoice, float $refundedAmount): void
     {
-        $commission = Transaction::where('gateway', 'affiliate_commission')
+        $rows = Transaction::where('gateway', 'affiliate_commission')
             ->where('invoice_id', $invoice->id)
-            ->orderByDesc('id')
-            ->first();
+            ->get();
 
-        if (! $commission) {
+        if ($rows->isEmpty()) {
             return;
         }
 
-        $earned = (float) $commission->amount_in;
+        // Everything earned on this invoice, and everything already taken back.
+        // Reading only the latest row meant that after one part refund the
+        // reversal itself was mistaken for the earning - its amount_in is zero,
+        // so a second part refund took nothing and the affiliate kept the rest.
+        $earned = (float) $rows->sum('amount_in');
+        $alreadyReversed = (float) $rows->sum('amount_out');
+        $outstanding = round($earned - $alreadyReversed, 2);
+
+        if ($outstanding <= 0.009) {
+            return;
+        }
+
         $invoiceTotal = (float) $invoice->total;
 
         $share = $invoiceTotal > 0 ? min(1.0, $refundedAmount / $invoiceTotal) : 1.0;
-        $reversal = round($earned * $share, 2);
+        $reversal = min(round($earned * $share, 2), $outstanding);
 
         if ($reversal <= 0.009) {
             return;
         }
+
+        $commission = $rows->firstWhere(fn ($row) => (float) $row->amount_in > 0) ?? $rows->first();
 
         $affiliate = Affiliate::where('client_id', $commission->client_id)->first();
 
@@ -183,6 +255,26 @@ class AffiliateService
     /**
      * Calculate commission based on affiliate's pay type and optional tiers.
      */
+    /**
+     * The part of an invoice a commission is owed on.
+     *
+     * The lines themselves, less anything that only moves money onto the
+     * customer's account. Tax is not among them, and neither is credit the
+     * customer is buying rather than spending.
+     */
+    public function commissionBase(Invoice $invoice): float
+    {
+        if ($invoice->items()->count() === 0) {
+            // Nothing to leave out. Refusing a commission on an invoice that
+            // carries no lines would be worse than counting its total.
+            return (float) $invoice->total;
+        }
+
+        return (float) $invoice->items()
+            ->where('type', '!=', 'AddFunds')
+            ->sum('amount');
+    }
+
     public function calculateCommission(Affiliate $affiliate, float $invoiceTotal): float
     {
         if ($affiliate->pay_type === 'percentage') {

@@ -14,6 +14,42 @@ class Service extends Model
 
     protected $hidden = ['password'];
 
+    /**
+     * How many months each billing cycle covers, so an amount charged once a
+     * year is not read as an amount charged every month.
+     *
+     * Keyed on the cycle with spaces and hyphens stripped: the same cycle is
+     * stored as "Semi-Annually", "semiannually" and "Annually" in different
+     * places.
+     */
+    public const CYCLE_MONTHS = [
+        'monthly' => 1,
+        'quarterly' => 3,
+        'semiannually' => 6,
+        'annually' => 12,
+        'biennially' => 24,
+        'triennially' => 36,
+    ];
+
+    /**
+     * The number of months this service's price covers. Anything unrecognised
+     * counts as one month, which is what the code did before there was a map.
+     */
+    public static function monthsInCycle(?string $cycle): int
+    {
+        $key = strtolower(str_replace([' ', '-', '_'], '', (string) $cycle));
+
+        return self::CYCLE_MONTHS[$key] ?? 1;
+    }
+
+    /**
+     * What this service is worth per month, whatever it is billed in.
+     */
+    public function monthlyAmount(): float
+    {
+        return round((float) $this->amount / self::monthsInCycle($this->billing_cycle), 2);
+    }
+
     protected static function booted(): void
     {
         // An addon cannot outlive the service it hangs off. Several places end
@@ -83,5 +119,34 @@ class Service extends Model
     public function scopeActive($q)
     {
         return $q->where('status', ServiceStatus::Active->value);
+    }
+
+    /** A service the customer can still act on (not terminated/cancelled/fraud). */
+    public function isLive(): bool
+    {
+        return ! in_array(strtolower((string) $this->status), ['terminated', 'cancelled', 'fraud'], true);
+    }
+
+    /**
+     * Hosting self-service tools this service offers, asked of its own module.
+     *
+     * Lives here rather than in the service page's controller because the
+     * dashboard and the service list link to these tools too, and all three
+     * have to agree on which ones exist. Reads only what is already loaded -
+     * module data and product config - so listing pages pay no API calls.
+     *
+     * @return string[]
+     */
+    public function hostingFeatureKeys(): array
+    {
+        if (! $this->server_id || ! $this->isLive()) {
+            return [];
+        }
+
+        $module = app(\App\Services\ProvisioningService::class)->resolveModule($this);
+
+        return $module && method_exists($module, 'hostingFeatures')
+            ? $module->hostingFeatures($this)
+            : [];
     }
 }

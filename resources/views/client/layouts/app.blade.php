@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield("title", __("client.my_account")) - PNLCS</title>
-    @vite(["resources/css/app.css"])
+    <title>@yield("title", __("client.my_account")) - {{ company_name() }}</title>
+    @vite(["resources/css/app.css", "resources/js/app.js"])
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -35,10 +35,13 @@
             --radius:12px;
             --radius-sm:8px;
         }
-        body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;background:var(--bg);color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased}
+        /* The page is a column the full height of the window, and the content
+           stretches to fill it - so on a short page the footer sits at the
+           bottom of the screen instead of floating mid-page under the form. */
+        body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;background:var(--bg);color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column}
 
         /* ─── NAVBAR ─── */
-        .pn-navbar{background:#fff;border-bottom:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.06);position:sticky;top:0;z-index:1000}
+        .pn-navbar{background:var(--card);border-bottom:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.06);position:sticky;top:0;z-index:1000}
         .pn-navbar-inner{max-width:1440px;margin:0 auto;padding:0 24px;display:flex;align-items:center;height:60px;gap:8px}
         .pn-brand{color:var(--primary);font-size:20px;font-weight:800;text-decoration:none;letter-spacing:-0.5px;flex-shrink:0;display:flex;align-items:center;gap:8px}
         .pn-brand-dot{width:8px;height:8px;background:var(--accent);border-radius:50%;display:inline-block}
@@ -49,7 +52,7 @@
         .pn-nav-link.active{color:var(--primary);background:var(--primary-light)}
         .pn-chevron{width:12px;height:12px;transition:transform 0.2s}
         .pn-nav-item:hover .pn-chevron{transform:rotate(180deg)}
-        .pn-dropdown{display:none;position:absolute;top:100%;left:0;min-width:200px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:999;padding:6px;overflow:hidden}
+        .pn-dropdown{display:none;position:absolute;top:100%;left:0;min-width:200px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:999;padding:6px;overflow:hidden}
         .pn-nav-item:hover .pn-dropdown,.pn-nav-item.open .pn-dropdown{display:block}.pn-dropdown::before{content:"";position:absolute;top:-10px;left:0;right:0;height:10px}
         .pn-dropdown a{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;font-weight:500;color:var(--text);text-decoration:none;border-radius:8px;transition:all 0.12s}
         .pn-dropdown a:hover{background:var(--primary-light);color:var(--primary)}
@@ -60,15 +63,15 @@
         .pn-avatar{width:28px;height:28px;background:var(--primary);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
         .pn-hamburger{display:none;background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;flex-direction:column;gap:4px}
         .pn-hamburger span{display:block;width:18px;height:2px;background:var(--muted);transition:all 0.2s}
-        .pn-mobile-menu{display:none;background:#fff;border-top:1px solid var(--border);padding:12px 0}
+        .pn-mobile-menu{display:none;background:var(--card);border-top:1px solid var(--border);padding:12px 0}
         .pn-mobile-menu a{display:block;padding:9px 24px;font-size:13.5px;font-weight:500;color:var(--text);text-decoration:none}
         .pn-mobile-menu a:hover{background:var(--primary-light);color:var(--primary)}
         .pn-mobile-sec{padding:8px 24px 4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.7px;margin-top:6px}
         @media(max-width:960px){.pn-nav{display:none}.pn-hamburger{display:flex}.pn-mobile-menu.open{display:block}}
 
         /* ─── LAYOUT ─── */
-        .pn-main{max-width:1440px;margin:0 auto;padding:36px 40px}
-        .pn-footer{background:#fff;border-top:1px solid var(--border);padding:20px 24px;text-align:center;font-size:12.5px;color:var(--muted);margin-top:48px}
+        .pn-main{max-width:1440px;margin:0 auto;padding:36px 40px;width:100%;flex:1}
+        .pn-footer{background:var(--card);border-top:1px solid var(--border);padding:20px 24px;text-align:center;font-size:12.5px;color:var(--muted);margin-top:auto}
         .pn-footer a{color:var(--primary);text-decoration:none}
         .pn-footer a:hover{text-decoration:underline}
 
@@ -88,9 +91,11 @@
         .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 18px;font-size:13.5px;font-weight:600;border-radius:var(--radius-sm);border:none;cursor:pointer;text-decoration:none;transition:all 0.15s;line-height:1.3;white-space:nowrap}
         .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark);color:#fff}
         .btn-accent{background:var(--accent);color:#fff}.btn-accent:hover{background:var(--accent-dark);color:#fff}
-        .btn-outline{background:#fff;color:var(--primary);border:1.5px solid var(--border)}.btn-outline:hover{border-color:var(--primary);background:var(--primary-light)}
+        .btn-outline{background:var(--card);color:var(--primary);border:1.5px solid var(--border)}.btn-outline:hover{border-color:var(--primary);background:var(--primary-light)}
         .btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{background:#dc2626;color:#fff}
         .btn-success{background:var(--success);color:#fff}.btn-success:hover{background:#059669;color:#fff}
+        .btn-default{background:var(--card);color:var(--text);border:1.5px solid var(--border)}.btn-default:hover{border-color:var(--muted);color:var(--text)}
+        .text-danger{color:var(--danger)}
         .btn-sm{padding:6px 12px;font-size:12.5px}
         .btn-xs{padding:4px 10px;font-size:12px}
         .btn svg,.btn i{flex-shrink:0;line-height:1}
@@ -101,8 +106,8 @@
         .badge-pending{background:#fef9c3;color:#854d0e}
         .badge-unpaid{background:#fff7ed;color:#c2410c}
         .badge-overdue{background:#fee2e2;color:#991b1b}
-        .badge-suspended,.badge-terminated,.badge-cancelled{background:#f1f5f9;color:#64748b}
-        .badge-closed{background:#f1f5f9;color:#64748b}
+        .badge-suspended,.badge-terminated,.badge-cancelled{background:var(--bg);color:var(--muted)}
+        .badge-closed{background:var(--bg);color:var(--muted)}
         .badge-open{background:#dbeafe;color:#1d4ed8}
         .badge-answered,.badge-in-progress{background:#e0f2fe;color:#0369a1}
         .badge-customer-reply{background:#fce7f3;color:#be185d}
@@ -110,24 +115,28 @@
         .badge-medium{background:#fff7ed;color:#c2410c}
         .badge-high{background:#fee2e2;color:#991b1b}
         .badge-yes{background:#dcfce7;color:#15803d}
-        .badge-no{background:#f1f5f9;color:#94a3b8}
+        .badge-no{background:var(--bg);color:var(--muted)}
 
         /* ─── TABLES ─── */
         .pn-table{width:100%;border-collapse:collapse}
-        .pn-table th{padding:11px 16px;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;background:#f8fafc;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
-        .pn-table td{padding:13px 16px;font-size:13.5px;color:var(--text);border-bottom:1px solid #f1f5f9;vertical-align:middle}
+        .pn-table th{padding:11px 16px;font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;background:var(--bg);border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+        .pn-table td{padding:13px 16px;font-size:13.5px;color:var(--text);border-bottom:1px solid var(--border);vertical-align:middle}
         .pn-table tbody tr:last-child td{border-bottom:none}
-        .pn-table tbody tr:hover td{background:#f8fafc}
+        .pn-table tbody tr:hover td{background:var(--bg)}
         .pn-table a{color:var(--primary);text-decoration:none;font-weight:500}
         .pn-table a:hover{text-decoration:underline}
 
         /* ─── FORMS ─── */
         .form-group{margin-bottom:20px}
-        .form-label{display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px}
+        .form-label,.pn-label{display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px}
         .form-label .req{color:var(--danger)}
-        .form-control{width:100%;padding:9px 13px;font-size:13.5px;color:var(--text);background:#fff;border:1.5px solid var(--border);border-radius:var(--radius-sm);transition:border-color 0.15s,box-shadow 0.15s;outline:none;font-family:inherit}
-        .form-control:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,77,128,0.1)}
-        textarea.form-control{resize:vertical;min-height:120px;line-height:1.6}
+        /* .pn-input and .pn-label ride the same definitions: four screens - the
+           bank-transfer notification, payment methods, two-factor setup, quotes -
+           used them while nothing defined them, so their inputs rendered with no
+           border and no background: invisible fields on a white card. */
+        .form-control,.pn-input{width:100%;padding:9px 13px;font-size:13.5px;color:var(--text);background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius-sm);transition:border-color 0.15s,box-shadow 0.15s;outline:none;font-family:inherit}
+        .form-control:focus,.pn-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,77,128,0.1)}
+        textarea.form-control,textarea.pn-input{resize:vertical;min-height:120px;line-height:1.6}
         select.form-control{cursor:pointer}
         .form-hint{font-size:12px;color:var(--muted);margin-top:4px}
         .form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -137,6 +146,7 @@
         .pn-alert{padding:12px 16px;border-radius:var(--radius-sm);font-size:13.5px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;border:1px solid transparent}
         .pn-alert-success{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}
         .pn-alert-error{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+        .pn-alert-danger{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
         .pn-alert-info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
         .pn-alert-warning{background:#fffbeb;border-color:#fde68a;color:#92400e}
         .pn-alert ul{padding-left:16px;margin:4px 0 0}
@@ -180,28 +190,28 @@
 
         /* ─── DETAIL LIST ─── */
         .pn-detail-list{list-style:none}
-        .pn-detail-list li{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;font-size:13.5px}
+        .pn-detail-list li{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13.5px}
         .pn-detail-list li:last-child{border-bottom:none}
         .pn-detail-list .key{color:var(--muted);font-weight:500}
         .pn-detail-list .val{font-weight:600;color:var(--text);text-align:right}
 
         /* ─── TICKET MESSAGES ─── */
-        .pn-msg{background:#fff;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden}
+        .pn-msg{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden}
         .pn-msg.staff{border-left:3px solid var(--primary)}
-        .pn-msg-head{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);background:#f8fafc}
+        .pn-msg-head{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);background:var(--bg)}
         .pn-msg.staff .pn-msg-head{background:#eff6ff}
         .pn-msg-author{font-size:13px;font-weight:700;color:var(--text)}
         .pn-msg.staff .pn-msg-author{color:var(--primary)}
         .pn-msg-date{font-size:12px;color:var(--muted)}
-        .pn-msg-body{padding:16px 18px;font-size:13.5px;line-height:1.75;color:#334155;white-space:pre-wrap}
+        .pn-msg-body{padding:16px 18px;font-size:13.5px;line-height:1.75;color:var(--text);white-space:pre-wrap}
 
         /* ─── GATEWAY TABS ─── */
         .gw-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-        .gw-tab{padding:8px 18px;border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);background:#fff;transition:all 0.15s}
+        .gw-tab{padding:8px 18px;border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);background:var(--card);transition:all 0.15s}
         .gw-tab:hover{border-color:var(--primary);color:var(--primary)}
         .gw-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
         .gw-panel{display:none}.gw-panel.active{display:block}
-        .gw-form-box{background:#f8fafc;border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:18px}
+        .gw-form-box{background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:18px}
 
         /* ─── PRODUCT CARDS ─── */
         .pn-product-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
@@ -224,7 +234,7 @@
 
         /* ─── AMOUNT PRESETS ─── */
         .pn-amount-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
-        .pn-amount-btn{padding:10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;font-weight:700;color:var(--text);background:#fff;cursor:pointer;text-align:center;transition:all 0.15s}
+        .pn-amount-btn{padding:10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;font-weight:700;color:var(--text);background:var(--card);cursor:pointer;text-align:center;transition:all 0.15s}
         .pn-amount-btn:hover,.pn-amount-btn.selected{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
 
         /* ─── AFFILIATE ─── */
@@ -245,13 +255,13 @@
         /* ─── CART ─── */
         .pn-cart-grid{display:grid;grid-template-columns:1fr 300px;gap:20px}
         @media(max-width:900px){.pn-cart-grid{grid-template-columns:1fr}}
-        .pn-order-row{display:flex;justify-content:space-between;padding:8px 0;font-size:13.5px;border-bottom:1px solid #f1f5f9}
+        .pn-order-row{display:flex;justify-content:space-between;padding:8px 0;font-size:13.5px;border-bottom:1px solid var(--border)}
         .pn-order-row:last-child{border-bottom:none;font-weight:700;font-size:15px;padding-top:12px}
         .pn-order-row .key{color:var(--muted)}
 
         /* ─── MISC ─── */
         .pn-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.7px;color:var(--muted);margin-bottom:12px}
-        .pn-code{background:#f1f5f9;padding:3px 8px;border-radius:6px;font-family:monospace;font-size:12.5px;color:var(--text)}
+        .pn-code{background:var(--bg);padding:3px 8px;border-radius:6px;font-family:monospace;font-size:12.5px;color:var(--text)}
         .link{color:var(--primary);text-decoration:none;font-weight:500}
         .link:hover{text-decoration:underline}
         .text-muted{color:var(--muted)}
@@ -274,28 +284,36 @@
             --text:#e2e8f0; --muted:#94a3b8;
         }
         :root[data-theme="dark"] body { background:var(--bg) !important; color:var(--text) !important; }
-        :root[data-theme="dark"] .pn-navbar { background:#1e293b !important; border-color:#334155 !important; }
-        :root[data-theme="dark"] .pn-card { background:#1e293b !important; border-color:#334155 !important; }
+        :root[data-theme="dark"] .pn-navbar { background:#1e293b !important; border-color:var(--border) !important; }
+        :root[data-theme="dark"] .pn-card { background:#1e293b !important; border-color:var(--border) !important; }
         :root[data-theme="dark"] .pn-table th { background:#1e293b !important; }
-        :root[data-theme="dark"] .pn-table td { border-color:#334155 !important; }
+        :root[data-theme="dark"] .pn-table td { border-color:var(--border) !important; }
         :root[data-theme="dark"] .pn-table tbody tr:hover td { background:#334155 !important; }
-        :root[data-theme="dark"] .form-control { background:#1e293b !important; border-color:#475569 !important; color:#e2e8f0 !important; }
-        :root[data-theme="dark"] .pn-footer { background:#1e293b !important; border-color:#334155 !important; color:#94a3b8 !important; }
-        :root[data-theme="dark"] .pn-dropdown { background:#1e293b !important; border-color:#334155 !important; }
+        :root[data-theme="dark"] .form-control, :root[data-theme="dark"] .pn-input { background:#1e293b !important; border-color:#475569 !important; color:#e2e8f0 !important; }
+        :root[data-theme="dark"] .pn-footer { background:#1e293b !important; border-color:var(--border) !important; color:var(--muted) !important; }
+        :root[data-theme="dark"] .pn-dropdown { background:#1e293b !important; border-color:var(--border) !important; }
         :root[data-theme="dark"] .pn-dropdown a { color:#e2e8f0 !important; }
         :root[data-theme="dark"] .pn-dropdown a:hover { background:#334155 !important; }
         :root[data-theme="dark"] .pn-card-title { color:#e2e8f0 !important; }
         :root[data-theme="dark"] .pn-page-title { color:#e2e8f0 !important; }
         :root[data-theme="dark"] .pn-stat-val { color:#e2e8f0 !important; }
         :root[data-theme="dark"] .pn-detail-list .val { color:#e2e8f0 !important; }
-        :root[data-theme="dark"] .pn-detail-list li { border-color:#334155 !important; }
-        :root[data-theme="dark"] .pn-msg { background:#1e293b !important; border-color:#334155 !important; }
+        :root[data-theme="dark"] .pn-detail-list li { border-color:var(--border) !important; }
+        :root[data-theme="dark"] .pn-msg { background:#1e293b !important; border-color:var(--border) !important; }
         :root[data-theme="dark"] .pn-msg-head { background:#0f172a !important; }
         :root[data-theme="dark"] .pn-msg-body { color:#cbd5e1 !important; }
         :root[data-theme="dark"] .pn-alert-info { background:#1e3a5f !important; border-color:#2563eb !important; }
         :root[data-theme="dark"] .pn-alert-success { background:#14532d !important; border-color:#16a34a !important; }
         :root[data-theme="dark"] .pn-alert-warning { background:#451a03 !important; border-color:#d97706 !important; }
-        :root[data-theme="dark"] .pn-alert-error { background:#450a0a !important; border-color:#dc2626 !important; }
+        :root[data-theme="dark"] .pn-alert-error, :root[data-theme="dark"] .pn-alert-danger { background:#450a0a !important; border-color:#dc2626 !important; }
+        /* Badges carry fixed light pastels; in the dark they turned into pale
+           chips with unreadable text. Deep tones, same meaning. */
+        :root[data-theme="dark"] .badge-active, :root[data-theme="dark"] .badge-paid { background:#14532d !important; color:#86efac !important; }
+        :root[data-theme="dark"] .badge-pending { background:#422006 !important; color:#fde047 !important; }
+        :root[data-theme="dark"] .badge-unpaid { background:#431407 !important; color:#fdba74 !important; }
+        :root[data-theme="dark"] .badge-overdue { background:#450a0a !important; color:#fca5a5 !important; }
+        :root[data-theme="dark"] .badge-suspended, :root[data-theme="dark"] .badge-terminated,
+        :root[data-theme="dark"] .badge-cancelled, :root[data-theme="dark"] .badge-closed { background:#1e293b !important; color:var(--muted) !important; }
     </style>
     @yield("styles")
 
@@ -315,7 +333,7 @@
 
 <nav class="pn-navbar">
     <div class="pn-navbar-inner">
-        <a href="{{ route("client.home") }}" class="pn-brand">@if(!empty($customLogo))<img src="{{ $customLogo }}" alt="Logo" style="max-height:32px;">@else PNLCS <span class="pn-brand-dot"></span>@endif</a>
+        <a href="{{ route("client.home") }}" class="pn-brand">@if(!empty($customLogo))<img src="{{ $customLogo }}" alt="Logo" style="max-height:32px;">@else {{ company_name() }} <span class="pn-brand-dot"></span>@endif</a>
 
         <div class="pn-nav">
             <div class="pn-nav-item">
@@ -336,6 +354,20 @@
                     </a>
                 </div>
             </div>
+            {{-- A guest's menu mirrors the storefront: one link per product
+                 group, straight from the catalogue - the same source the
+                 marketing pages read, so the menus cannot drift apart. --}}
+            @guest
+            @php $navGroups = \App\Models\ProductGroup::where('hidden', 0)->orderBy('sort_order')->get(); @endphp
+            @foreach($navGroups as $navGroup)
+            <div class="pn-nav-item">
+                <a href="{{ route("client.store") }}?kategori={{ $navGroup->slug }}"
+                   class="pn-nav-link {{ request()->routeIs("client.store*") && request("kategori") === $navGroup->slug ? "active" : "" }}">
+                    {{ $navGroup->name }}
+                </a>
+            </div>
+            @endforeach
+            @endguest
             <div class="pn-nav-item">
                 <button type="button" class="pn-nav-link {{ request()->routeIs("client.domains.*") ? "active" : "" }}">{{ __('client.nav.domains') }}
                     <svg class="pn-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
@@ -345,6 +377,7 @@
                         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/></svg>
                         {{ __('client.nav.my_domains') }}
                     </a>
+                    <a href="/"><svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg> {{ __('client.nav.home_site') }}</a>
                     <a href="/client/domain-search"><svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/></svg> {{ __('client.nav.register_domain') }}</a>
                     <a href="/client/domain-pricing"><svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"/></svg> {{ __('client.nav.domain_pricing') }}</a>
                 </div>
@@ -521,6 +554,19 @@
             {{ session("error") }}
         </div>
     @endif
+    {{-- Validation errors. Only the flash keys were drawn here, so every
+         refused form (the free-plan limit, the cycle guard, checkout rules)
+         bounced back to the same page with no explanation at all. --}}
+    @if($errors->any())
+        <div class="pn-alert pn-alert-error">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="flex-shrink:0;margin-top:1px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            <div>
+                @foreach($errors->all() as $validationError)
+                    <div>{{ $validationError }}</div>
+                @endforeach
+            </div>
+        </div>
+    @endif
     @if(session("info"))
         <div class="pn-alert pn-alert-info">
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="flex-shrink:0;margin-top:1px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -538,7 +584,7 @@
 </div>
 
 <footer class="pn-footer">
-    <span>&copy; {{ date("Y") }} {{ __('client.footer.brand') }}. {{ __('client.footer.all_rights_reserved') }}</span>
+    <span>&copy; {{ date("Y") }} {{ company_name() }}. {{ __('client.footer.all_rights_reserved') }}</span>
     &nbsp;&middot;&nbsp;
     <a href="{{ route("client.contact") }}">{{ __('client.nav.contact') }}</a>
     &nbsp;&middot;&nbsp;
@@ -548,6 +594,8 @@
 </footer>
 
 @yield("scripts")
+{{-- A page may push instead of yielding; without this the block is silently discarded. --}}
+@stack('scripts')
 <script>
 // Dropdown click toggle for mobile/touch
 document.querySelectorAll(".pn-nav-item > .pn-nav-link, .pn-nav-item > button.pn-nav-link").forEach(function(link) {

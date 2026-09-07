@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield("title", "Admin") - PNLCS</title>
+    <title>@yield("title", "Admin") - {{ company_name() }}</title>
     @vite(["resources/css/app.css"])
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
     @if(!empty($customFavicon))
@@ -37,7 +37,7 @@
         @if(!empty($customLogo))
             <img src="{{ $customLogo }}" alt="Logo" style="max-height:30px; vertical-align:middle;">
         @else
-            PNLCS
+            {{ company_name() }}
         @endif
     </a>
 
@@ -103,6 +103,7 @@
                     <li><a href="{{ route('admin.payment-notifications.index') }}">{{ __('admin.nav.payment_notifications') }} @if(($sidebarCounts->pending_payment_notifications ?? 0) > 0)<span class="sb-badge sb-badge-warning">{{ $sidebarCounts->pending_payment_notifications }}</span>@endif</a></li>
                     <li><a href="{{ route('admin.config.transactions') }}">{{ __('admin.nav.transactions') }}</a></li>
                     <li><a href="{{ route('admin.config.billable-items') }}">{{ __('admin.nav.billable_items') }}</a></li>
+                    <li><a href="{{ route('admin.affiliates.index') }}">{{ __('admin.sidebar.affiliates') }}</a></li>
                     <li class="divider"></li>
                     <li><a href="{{ route('admin.quotes.index') }}">{{ __('admin.nav.quotes') }}</a></li>
                 </ul>
@@ -209,6 +210,7 @@
                     <li class="divider"></li>
                     <li><a href="{{ route('admin.config.currencies') }}">{{ __('admin.nav.currencies') }}</a></li>
                     <li><a href="{{ route('admin.config.tax') }}">{{ __('admin.nav.tax_rules') }}</a></li>
+                    <li><a href="{{ route('admin.config.custom-fields') }}">{{ __('admin.nav.custom_fields') }}</a></li>
                     <li><a href="{{ route('admin.config.promotions') }}">{{ __('admin.nav.promotions') }}</a></li>
                     <li class="divider"></li>
                     <li><a href="{{ route('admin.config.ticket-departments') }}">{{ __('admin.nav.ticket_departments') }}</a></li>
@@ -295,7 +297,7 @@
         </ul>
         <div class="sidebar-header"><i class="fas fa-coins"></i> {{ __('admin.sidebar.affiliates') }}</div>
         <ul class="menu">
-            <li><a href="{{ route('admin.config.affiliates') }}">{{ __('admin.sidebar.affiliate_accounts') }}</a></li>
+            <li><a href="{{ route('admin.affiliates.index') }}" @if($routeName === 'admin.affiliates.index') class="active" @endif>{{ __('admin.sidebar.affiliates') }}</a></li>
         </ul>
 
     {{-- ── Orders Sidebar ── --}}
@@ -310,7 +312,7 @@
         </ul>
 
     {{-- ── Invoices / Billing Sidebar ── --}}
-    @elseif($segment === 'invoices' || $segment === 'quotes' || $routeName === 'admin.config.transactions' || $routeName === 'admin.config.billable-items')
+    @elseif($segment === 'invoices' || $segment === 'quotes' || $segment === 'affiliates' || $routeName === 'admin.config.transactions' || $routeName === 'admin.config.billable-items')
         <div class="sidebar-header"><i class="fas fa-money-bill-wave"></i> {{ __('admin.nav.billing') }}</div>
         <ul class="menu">
             <li><a href="{{ route('admin.invoices.index') }}" @if($routeName === 'admin.invoices.index' && !request()->has('status')) class="active" @endif>{{ __('admin.sidebar.all_invoices') }}</a></li>
@@ -324,6 +326,7 @@
         <ul class="menu">
             <li><a href="{{ route('admin.config.transactions') }}" @if($routeName === 'admin.config.transactions') class="active" @endif>{{ __('admin.nav.transactions') }}</a></li>
             <li><a href="{{ route('admin.config.billable-items') }}" @if($routeName === 'admin.config.billable-items') class="active" @endif>{{ __('admin.nav.billable_items') }}</a></li>
+            <li><a href="{{ route('admin.affiliates.index') }}" @if($routeName === 'admin.affiliates.index') class="active" @endif>{{ __('admin.sidebar.affiliates') }}</a></li>
         </ul>
         <div class="sidebar-header"><i class="fas fa-file-signature"></i> {{ __('admin.nav.quotes') }}</div>
         <ul class="menu">
@@ -398,6 +401,7 @@
             <li><a href="{{ route('admin.config.gateways') }}" @if($routeName === 'admin.config.gateways') class="active" @endif>{{ __('admin.nav.payment_gateways') }}</a></li>
             <li><a href="{{ route('admin.config.currencies') }}" @if($routeName === 'admin.config.currencies') class="active" @endif>{{ __('admin.nav.currencies') }}</a></li>
             <li><a href="{{ route('admin.config.tax') }}" @if($routeName === 'admin.config.tax') class="active" @endif>{{ __('admin.nav.tax_rules') }}</a></li>
+            <li><a href="{{ route('admin.config.custom-fields') }}" @if($routeName === 'admin.config.custom-fields') class="active" @endif>{{ __('admin.nav.custom_fields') }}</a></li>
             <li><a href="{{ route('admin.config.promotions') }}" @if($routeName === 'admin.config.promotions') class="active" @endif>{{ __('admin.nav.promotions') }}</a></li>
         </ul>
 
@@ -406,6 +410,7 @@
             <li><a href="{{ route('admin.products.index') }}" @if($routeName === 'admin.products.index') class="active" @endif>{{ __('admin.nav.products_services') }}</a></li>
             <li><a href="{{ route('admin.products.create') }}" @if($routeName === 'admin.products.create') class="active" @endif>{{ __('admin.sidebar.create_product') }}</a></li>
             <li><a href="{{ route('admin.products.groups.create') }}" @if($routeName === 'admin.products.groups.create') class="active" @endif>{{ __('admin.sidebar.product_groups') }}</a></li>
+            <li><a href="{{ route('admin.docker-apps.index') }}" @if($routeName === 'admin.docker-apps.index') class="active" @endif>{{ __('admin.nav.docker_apps') }}</a></li>
         </ul>
 
         <div class="sidebar-header"><i class="fas fa-server"></i> {{ __('admin.sidebar.servers_domains') }}</div>
@@ -521,7 +526,7 @@
      ═══════════════════════════════════════════════ --}}
 <div class="footerbar clearfix" style="background-color:var(--theme-footer-bg, #1a4d80);">
     <div style="float:left;">
-        &copy; {{ date('Y') }} PNLCS - {{ __('admin.footer.billing_support_system') }}
+        &copy; {{ date('Y') }} {{ company_name() }}@if(! branding_removed()) - {{ __('admin.footer.billing_support_system') }} &middot; <a href="https://github.com/Panelica/pnlcs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">GitHub</a>@endif
     </div>
     <div style="float:right;">
         <a href="{{ route('admin.dashboard') }}">{{ __('admin.footer.admin_home') }}</a> |

@@ -1,7 +1,152 @@
 <?php
 
+use App\Models\Currency;
 use App\Models\Setting;
 
+if (! function_exists('money_fmt')) {
+    /**
+     * An amount in the currency the shop sells in.
+     *
+     * Emails printed a dollar sign whatever the operator had configured, so a
+     * customer buying in euros was billed in euros and told about dollars.
+     */
+    function money_fmt(float|int|string|null $amount): string
+    {
+        $value = number_format((float) $amount, 2);
+
+        // Wrapped in an array: the container cannot resolve a bare null.
+        if (! app()->bound('pnlcs.currency')) {
+            try {
+                app()->instance('pnlcs.currency', ['currency' => Currency::getDefault()]);
+            } catch (Throwable) {
+                app()->instance('pnlcs.currency', ['currency' => null]);
+            }
+        }
+
+        $currency = app('pnlcs.currency')['currency'] ?? null;
+
+        return $currency
+            ? $currency->prefix.$value.$currency->suffix
+            : '$'.$value;
+    }
+}
+if (! function_exists('payment_method_label')) {
+    /**
+     * A payment method key as the customer-facing label.
+     *
+     * The panel stores keys like 'banktransfer' or 'stripe' and a couple of
+     * views printed ucfirst($method), which showed "Banktransfer" whatever
+     * language the customer was in. The label comes from the translations now.
+     */
+    function payment_method_label(string $method): string
+    {
+        if ($method === '' || $method === 'none') {
+            return $method;
+        }
+
+        $key = 'messages.payment_method.'.$method;
+
+        if (Lang::has($key)) {
+            return Lang::get($key);
+        }
+
+        return ucwords(str_replace('_', ' ', $method));
+    }
+}
+if (! function_exists('invoice_status_label')) {
+    /**
+     * An invoice status key as the customer-facing label.
+     *
+     * The panel stores keys like 'unpaid' or 'overdue' and several views
+     * printed ucfirst($status), which showed English whatever the language the
+     * customer was in. The label comes from the common.status.* translations
+     * now, so every screen agrees on the same word.
+     */
+    function invoice_status_label(?string $status): string
+    {
+        $status = strtolower((string) $status);
+
+        if ($status === '') {
+            return '';
+        }
+
+        $key = 'common.status.'.$status;
+
+        if (Lang::has($key)) {
+            return Lang::get($key);
+        }
+
+        return ucfirst(str_replace('_', ' ', $status));
+    }
+}
+if (! function_exists('currency_symbol')) {
+    /**
+     * The sign in front of an amount in the currency the shop sells in.
+     *
+     * For the few places that print a rate rather than an amount - a price per
+     * megabyte, say - where rounding to two decimals would misstate it.
+     */
+    function currency_symbol(): string
+    {
+        if (! app()->bound('pnlcs.currency')) {
+            try {
+                app()->instance('pnlcs.currency', ['currency' => Currency::getDefault()]);
+            } catch (Throwable) {
+                app()->instance('pnlcs.currency', ['currency' => null]);
+            }
+        }
+
+        return (string) (app('pnlcs.currency')['currency']->prefix ?? '$');
+    }
+}if (! function_exists('shop_currency_code')) {
+    /**
+     * The three-letter code of the currency the shop sells in.
+     *
+     * Everything is priced, invoiced and charged in this one currency; the
+     * gateways used to be told nothing and each fell back to a different
+     * default of its own.
+     */
+    function shop_currency_code(): string
+    {
+        if (! app()->bound('pnlcs.currency')) {
+            try {
+                app()->instance('pnlcs.currency', ['currency' => Currency::getDefault()]);
+            } catch (Throwable) {
+                app()->instance('pnlcs.currency', ['currency' => null]);
+            }
+        }
+
+        return strtoupper((string) (app('pnlcs.currency')['currency']->code ?? 'USD'));
+    }
+}if (! function_exists('company_name')) {
+    /**
+     * What the business calls itself.
+     *
+     * The white-label name wins when the operator has set one — that is what
+     * white-labelling means — then the company name from Settings, then the
+     * application name. Subjects and bodies used to resolve this differently
+     * and an email could carry both names at once.
+     */
+    function company_name(): string
+    {
+        if (app()->bound('pnlcs.company_name')) {
+            return app('pnlcs.company_name');
+        }
+
+        try {
+            $name = trim((string) Setting::get('whitelabel_company_name', ''))
+                ?: trim((string) Setting::get('CompanyName', ''));
+        } catch (Throwable) {
+            $name = '';
+        }
+
+        $name = $name !== '' ? $name : (string) config('app.name', 'PNLCS');
+
+        app()->instance('pnlcs.company_name', $name);
+
+        return $name;
+    }
+}
 if (! function_exists('date_fmt')) {
     /**
      * The date format the operator picked in Settings → General.
@@ -63,5 +208,53 @@ if (! function_exists('display_tz')) {
         app()->instance('pnlcs.display_tz', $tz);
 
         return $tz;
+    }
+}
+
+if (! function_exists('branding_removed')) {
+    /**
+     * Whether the operator asked for the product's own name to be taken off
+     * the pages their customers see.
+     *
+     * Settings -> Appearance has offered this switch all along; nothing read
+     * it, so a reseller who turned it on still handed their customers pages
+     * headed PNLCS.
+     */
+    function branding_removed(): bool
+    {
+        try {
+            return (string) Setting::get('whitelabel_remove_branding', '0') === '1';
+        } catch (Throwable) {
+            return false;
+        }
+    }
+}
+
+if (! function_exists('csv_cell')) {
+    /**
+     * A value as text, not as something a spreadsheet will run.
+     *
+     * A cell beginning with =, +, - or @ is a formula to Excel, Numbers and
+     * LibreOffice, and it runs when the file is opened. The fields in these
+     * exports are the ones customers fill in themselves, and the person who
+     * opens the file is the operator, so the leading character is quoted and
+     * the value stays readable.
+     */
+    function csv_cell(mixed $value): string
+    {
+        $value = (string) $value;
+
+        if ($value === '') {
+            return $value;
+        }
+
+        return str_starts_with($value, '=')
+            || str_starts_with($value, '+')
+            || str_starts_with($value, '-')
+            || str_starts_with($value, '@')
+            || str_starts_with($value, "\t")
+            || str_starts_with($value, "\r")
+                ? "'".$value
+                : $value;
     }
 }

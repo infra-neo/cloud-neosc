@@ -27,7 +27,9 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
     Route::get('login', [AuthController::class, 'showLogin'])->name('login');
     Route::post('login', [AuthController::class, 'login'])->middleware('throttle:10,1')->name('login.submit');
     Route::get('register', [AuthController::class, 'showRegister'])->name('register');
-    Route::post('register', [AuthController::class, 'register'])->name('register.submit');
+    // Signing up makes an account and sends mail; the contact form next to
+    // it has been counted all along.
+    Route::post('register', [AuthController::class, 'register'])->middleware('throttle:5,1')->name('register.submit');
 
     // Password Reset
     Route::get('forgot-password', [AuthController::class, 'showForgotPassword'])->name('password.request');
@@ -52,17 +54,37 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
 
     // Domain Search (public — no auth required)
     Route::get('domain-search', [DomainSearchController::class, 'index'])->name('domain.search');
-    Route::post('domain-search', [DomainSearchController::class, 'check'])->name('domain.check');
+    // One search fans out into a WHOIS query for the name and one for every
+    // suggested ending - outbound connections the registries throttle
+    // themselves, made in the operator's name by anybody at all.
+    Route::post('domain-search', [DomainSearchController::class, 'check'])->middleware('throttle:20,1')->name('domain.check');
     Route::get('domain-pricing', [DomainSearchController::class, 'pricing'])->name('domain.pricing');
 
     // Store — public browsing
     Route::get('store', [CartController::class, 'store'])->name('store');
     Route::get('store/configure/{product:slug}', [CartController::class, 'configure'])->name('store.configure');
 
+    // Cart and checkout are open to visitors: the account is opened AT
+    // checkout, not before it. The old shape - configure a product, press
+    // "add to cart", hit a login wall, lose the configuration, start over -
+    // was the most expensive moment in the funnel to put a wall in. The
+    // checkout POST creates the account in-line for guests; CartService has
+    // always keyed guest carts by session, only the routes forbade them.
+    Route::get('cart', [CartController::class, 'index'])->name('cart.index');
+    Route::post('cart/add', [CartController::class, 'addToCart'])->name('cart.add');
+    Route::post('cart/add-domain', [CartController::class, 'addDomainToCart'])->name('cart.add-domain');
+    Route::delete('cart/remove/{index}', [CartController::class, 'removeItem'])->name('cart.remove');
+    Route::post('cart/promo', [CartController::class, 'applyPromo'])->name('cart.promo');
+    Route::get('cart/checkout', [CartController::class, 'checkout'])->name('cart.checkout');
+    Route::post('cart/checkout', [CartController::class, 'processCheckout'])->middleware('throttle:10,1')->name('cart.process');
+
     // 2FA verification (requires login but not 2FA yet)
     Route::middleware('auth')->withoutMiddleware([TwoFactorVerify::class])->group(function () {
         Route::get('2fa', [AuthController::class, 'show2faVerify'])->name('2fa.verify');
-        Route::post('2fa', [AuthController::class, 'verify2fa'])->name('2fa.verify.submit');
+        // Six digits, and the form that comes before it allows ten tries a
+        // minute. Unthrottled, the second factor is only as good as the
+        // patience of whoever already has the password.
+        Route::post('2fa', [AuthController::class, 'verify2fa'])->middleware('throttle:10,1')->name('2fa.verify.submit');
     });
 
     Route::middleware(['auth', '2fa'])->group(function () {
@@ -84,8 +106,63 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::post('services/{service}/addons', [ServiceController::class, 'storeAddon'])->name('services.addons.store');
         Route::post('services/{service}/addons/{addon}/cancel', [ServiceController::class, 'cancelAddon'])->name('services.addons.cancel');
 
+        // Hosting management (Panelica-only, feature-gated in the controller)
+        Route::get('services/{service}/emails', [ServiceController::class, 'emails'])->name('services.emails');
+        Route::post('services/{service}/emails', [ServiceController::class, 'storeEmail'])->name('services.emails.store');
+        Route::post('services/{service}/emails/delete', [ServiceController::class, 'destroyEmail'])->name('services.emails.destroy');
+        Route::post('services/{service}/emails/password', [ServiceController::class, 'updateEmailPassword'])->name('services.emails.password');
+        Route::get('services/{service}/ftp', [ServiceController::class, 'ftp'])->name('services.ftp');
+        Route::post('services/{service}/ftp', [ServiceController::class, 'storeFtp'])->name('services.ftp.store');
+        Route::post('services/{service}/ftp/delete', [ServiceController::class, 'destroyFtp'])->name('services.ftp.destroy');
+        Route::post('services/{service}/ftp/password', [ServiceController::class, 'updateFtpPassword'])->name('services.ftp.password');
+        Route::get('services/{service}/subdomains', [ServiceController::class, 'subdomains'])->name('services.subdomains');
+        Route::post('services/{service}/subdomains', [ServiceController::class, 'storeSubdomain'])->name('services.subdomains.store');
+        Route::post('services/{service}/subdomains/delete', [ServiceController::class, 'destroySubdomain'])->name('services.subdomains.destroy');
+        Route::get('services/{service}/cron', [ServiceController::class, 'cron'])->name('services.cron');
+        Route::post('services/{service}/cron', [ServiceController::class, 'storeCron'])->name('services.cron.store');
+        Route::post('services/{service}/cron/toggle', [ServiceController::class, 'toggleCron'])->name('services.cron.toggle');
+        Route::post('services/{service}/cron/run', [ServiceController::class, 'runCron'])->name('services.cron.run');
+        Route::post('services/{service}/cron/delete', [ServiceController::class, 'destroyCron'])->name('services.cron.destroy');
+        Route::get('services/{service}/dns', [ServiceController::class, 'dns'])->name('services.dns');
+        Route::post('services/{service}/dns', [ServiceController::class, 'storeDns'])->name('services.dns.store');
+        Route::post('services/{service}/dns/update', [ServiceController::class, 'updateDns'])->name('services.dns.update');
+        Route::post('services/{service}/dns/delete', [ServiceController::class, 'destroyDns'])->name('services.dns.destroy');
+        Route::get('services/{service}/backups', [ServiceController::class, 'backups'])->name('services.backups');
+        Route::post('services/{service}/backups', [ServiceController::class, 'storeBackup'])->name('services.backups.store');
+        Route::post('services/{service}/backups/delete', [ServiceController::class, 'destroyBackup'])->name('services.backups.destroy');
+        // Runtime applications (Laravel / Node.js / Python) — read-only lists.
+        Route::get('services/{service}/laravel', [ServiceController::class, 'laravelApps'])->name('services.laravel');
+        Route::get('services/{service}/nodejs', [ServiceController::class, 'nodejsApps'])->name('services.nodejs');
+        Route::get('services/{service}/python', [ServiceController::class, 'pythonApps'])->name('services.python');
+        Route::get('services/{service}/containers', [ServiceController::class, 'containers'])->name('services.containers');
+        Route::post('services/{service}/containers', [ServiceController::class, 'storeContainer'])->name('services.containers.store');
+        Route::post('services/{service}/containers/action', [ServiceController::class, 'containerAction'])->name('services.containers.action');
+        Route::post('services/{service}/containers/delete', [ServiceController::class, 'destroyContainer'])->name('services.containers.destroy');
+        Route::post('services/{service}/containers/email-details', [ServiceController::class, 'emailContainerDetails'])->name('services.containers.email');
+        // Opened by hand (a pasted address, a refresh after the redirect) this
+        // was a 405 dressed up as a server error. There is nothing to GET here.
+        Route::get('services/{service}/containers/email-details', fn (\App\Models\Service $service) => redirect()->route('client.services.containers', $service));
+        // Serving an app on the customer's own domain
+        Route::post('services/{service}/containers/link-domain', [ServiceController::class, 'linkContainerDomain'])->name('services.containers.link');
+        Route::post('services/{service}/containers/unlink-domain', [ServiceController::class, 'unlinkContainerDomain'])->name('services.containers.unlink');
+        Route::get('services/{service}/databases', [ServiceController::class, 'databases'])->name('services.databases');
+        Route::post('services/{service}/databases', [ServiceController::class, 'storeDatabase'])->name('services.databases.store');
+        Route::post('services/{service}/databases/delete', [ServiceController::class, 'destroyDatabase'])->name('services.databases.destroy');
+        Route::post('services/{service}/databases/users', [ServiceController::class, 'storeDatabaseUser'])->name('services.databases.users.store');
+        Route::post('services/{service}/databases/users/delete', [ServiceController::class, 'destroyDatabaseUser'])->name('services.databases.users.destroy');
+        Route::post('services/{service}/databases/users/password', [ServiceController::class, 'updateDatabaseUserPassword'])->name('services.databases.users.password');
+        Route::get('services/{service}/files', [ServiceController::class, 'files'])->name('services.files');
+        Route::get('services/{service}/files/download', [ServiceController::class, 'filesDownload'])->name('services.files.download');
+        Route::get('services/{service}/files/edit', [ServiceController::class, 'filesEdit'])->name('services.files.edit');
+        Route::post('services/{service}/files/save', [ServiceController::class, 'filesWrite'])->name('services.files.save');
+        Route::post('services/{service}/files/create', [ServiceController::class, 'filesCreate'])->name('services.files.create');
+        Route::post('services/{service}/files/upload', [ServiceController::class, 'filesUpload'])->name('services.files.upload');
+        Route::post('services/{service}/files/rename', [ServiceController::class, 'filesRename'])->name('services.files.rename');
+        Route::post('services/{service}/files/delete', [ServiceController::class, 'filesDelete'])->name('services.files.delete');
+
         // Domains
         Route::get('domains', [DomainController::class, 'index'])->name('domains.index');
+        Route::get('domains/transfer', [DomainController::class, 'transfer'])->name('domains.transfer');
         Route::get('domains/{domain}', [DomainController::class, 'show'])->name('domains.show');
         Route::put('domains/{domain}/nameservers', [DomainController::class, 'updateNameservers'])->name('domains.nameservers');
         Route::post('domains/{domain}/lock', [DomainController::class, 'toggleLock'])->name('domains.lock');
@@ -135,15 +212,9 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::get('affiliates', [AffiliateController::class, 'index'])->name('affiliates.index');
         Route::post('affiliates/activate', [AffiliateController::class, 'activate'])->name('affiliates.activate');
         Route::post('affiliates/withdraw', [AffiliateController::class, 'withdraw'])->name('affiliates.withdraw');
+        Route::post('affiliates/to-balance', [AffiliateController::class, 'toBalance'])->name('affiliates.toBalance');
 
         // Cart & Checkout
-        Route::get('cart', [CartController::class, 'index'])->name('cart.index');
-        Route::post('cart/add', [CartController::class, 'addToCart'])->name('cart.add');
-        Route::post('cart/add-domain', [CartController::class, 'addDomainToCart'])->name('cart.add-domain');
-        Route::delete('cart/remove/{index}', [CartController::class, 'removeItem'])->name('cart.remove');
-        Route::post('cart/promo', [CartController::class, 'applyPromo'])->name('cart.promo');
-        Route::get('cart/checkout', [CartController::class, 'checkout'])->name('cart.checkout');
-        Route::post('cart/checkout', [CartController::class, 'processCheckout'])->name('cart.process');
 
         // Account Management
         Route::get('account', [AccountController::class, 'profile'])->name('account.profile');
@@ -157,6 +228,8 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::delete('account/contacts/{contact}', [AccountController::class, 'destroyContact'])->name('account.contacts.destroy');
         Route::get('account/payment-methods', [AccountController::class, 'paymentMethods'])->name('account.payment_methods');
         Route::get('account/security', [AccountController::class, 'security'])->name('account.security');
+        Route::post('account/phone/verification', [\App\Http\Controllers\Client\PhoneVerificationController::class, 'start'])->name('account.phone.verify');
+        Route::post('account/phone/verification-check', [\App\Http\Controllers\Client\PhoneVerificationController::class, 'check'])->name('account.phone.verify_check');
         Route::post('account/security/sessions/{sessionId}/logout', [AccountController::class, 'logoutSession'])->name('account.security.logout_session');
         Route::match(['get', 'post'], '2fa/enable', [AuthController::class, 'enable2fa'])->name('2fa.enable');
         Route::post('2fa/disable', [AuthController::class, 'disable2fa'])->name('2fa.disable');

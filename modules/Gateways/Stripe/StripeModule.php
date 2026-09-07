@@ -23,8 +23,8 @@ class StripeModule implements GatewayModuleInterface
     public function getConfigFields(): array
     {
         return [
-            ["name" => "publishable_key", "label" => "Publishable Key",         "type" => "text"],
-            ["name" => "secret_key",      "label" => "Secret Key",              "type" => "password"],
+            ["name" => "publishable_key", "label" => "Publishable Key",         "type" => "text", "required" => true],
+            ["name" => "secret_key",      "label" => "Secret Key",              "type" => "password", "required" => true],
             ["name" => "webhook_secret",  "label" => "Webhook Signing Secret",  "type" => "password"],
         ];
     }
@@ -44,7 +44,7 @@ class StripeModule implements GatewayModuleInterface
             return ["success" => false, "message" => "Stripe secret key not configured."];
         }
 
-        $currency = strtolower($params["currency"] ?? "usd");
+        $currency = strtolower($params["currency"] ?? shop_currency_code());
         $amountCents = (int) round($amount * 100);
 
         $response = Http::asForm()
@@ -114,7 +114,7 @@ class StripeModule implements GatewayModuleInterface
     public function getPaymentForm(Invoice $invoice): string
     {
         $publishableKey = $this->getSetting("publishable_key") ?? "";
-        $amount         = number_format((float) $invoice->total, 2, ".", "");
+        $amount         = number_format($invoice->amountDue(), 2, ".", "");
         $invoiceId      = (int) $invoice->id;
 
         if (!$publishableKey) {
@@ -257,8 +257,21 @@ HTML;
         $payload       = $data["_raw_payload"] ?? "";
         $sigHeader     = $data["_signature_header"] ?? "";
 
+        // r170-unsigned: prove who sent this before acting on it.
+        //
+        // The check used to run only when a secret, a signature header and a raw
+        // body all happened to be present. With any of them missing it fell
+        // through to the ordinary processing, so an unsigned POST to the public
+        // webhook URL naming an invoice id in its metadata marked that invoice
+        // paid - and payment then does everything payment does. The
+        // Authorize.net module already refuses in exactly this case.
+        if (!$webhookSecret || !$sigHeader || !$payload) {
+            Log::warning("Stripe: webhook refused - no signature to check against");
+            return ["success" => false, "message" => "Unsigned webhook."];
+        }
+
         // Verify Stripe webhook signature
-        if ($webhookSecret && $sigHeader && $payload) {
+        {
             $parts    = [];
             $elements = explode(",", $sigHeader);
             foreach ($elements as $element) {

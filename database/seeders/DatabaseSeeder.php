@@ -6,6 +6,7 @@ use App\Models\Admin;
 use App\Models\AdminRole;
 use App\Models\Currency;
 use App\Models\Setting;
+use App\Models\TaxRule;
 use App\Models\TicketDepartment;
 use App\Models\TicketStatus;
 use Illuminate\Database\Seeder;
@@ -46,16 +47,48 @@ class DatabaseSeeder extends Seeder
         Currency::firstOrCreate(['code' => 'GBP'], ['prefix' => '£', 'suffix' => ' GBP', 'rate' => 0.79000]);
         Currency::firstOrCreate(['code' => 'TRY'], ['prefix' => '₺', 'suffix' => ' TRY', 'rate' => 32.50000]);
 
+        // Default Polish VAT rates, grouped under Poland; 23% is the default.
+        TaxRule::firstOrCreate(['name' => 'VAT 23%', 'country' => 'PL'], ['tax_rate' => 23.00, 'state' => '', 'is_default' => true]);
+        TaxRule::firstOrCreate(['name' => 'VAT 8%', 'country' => 'PL'], ['tax_rate' => 8.00, 'state' => '', 'is_default' => false]);
+        TaxRule::firstOrCreate(['name' => 'VAT 5%', 'country' => 'PL'], ['tax_rate' => 5.00, 'state' => '', 'is_default' => false]);
+        TaxRule::firstOrCreate(['name' => 'VAT 0%', 'country' => 'PL'], ['tax_rate' => 0.00, 'state' => '', 'is_default' => false]);
+        TaxRule::firstOrCreate(['name' => 'VAT ZW', 'country' => 'PL'], ['tax_rate' => 0.00, 'state' => '', 'is_default' => false]);
+        TaxRule::firstOrCreate(['name' => 'VAT NP', 'country' => 'PL'], ['tax_rate' => 0.00, 'state' => '', 'is_default' => false]);
+
+        // Standard VAT rate for every other European country (and Turkey).
+        $europeanVat = [
+            'AT' => 20, 'BE' => 21, 'BG' => 20, 'HR' => 25, 'CY' => 19, 'CZ' => 21,
+            'DK' => 25, 'EE' => 22, 'FI' => 25.5, 'FR' => 20, 'DE' => 19, 'GR' => 24,
+            'HU' => 27, 'IE' => 23, 'IT' => 22, 'LV' => 21, 'LT' => 21, 'LU' => 17,
+            'MT' => 18, 'NL' => 21, 'PT' => 23, 'RO' => 19, 'SK' => 23,
+            'SI' => 22, 'ES' => 21, 'SE' => 25,
+            'GB' => 20, 'CH' => 8.1, 'NO' => 25, 'IS' => 24, 'LI' => 8.1, 'TR' => 20,
+            'AL' => 20, 'AD' => 4.5, 'BY' => 20, 'BA' => 17, 'GE' => 18, 'MD' => 20,
+            'MK' => 18, 'ME' => 21, 'RS' => 20, 'UA' => 20, 'MC' => 20, 'SM' => 22,
+            'AM' => 20, 'AZ' => 18, 'XK' => 18,
+        ];
+
+        foreach ($europeanVat as $code => $rate) {
+            TaxRule::firstOrCreate(
+                ['country' => $code, 'state' => ''],
+                ['name' => "VAT {$rate}%", 'tax_rate' => $rate, 'is_default' => true]
+            );
+        }
+
         // Default settings
         $settings = [
             ['setting' => 'CompanyName', 'value' => 'PNLCS', 'group' => 'general'],
             ['setting' => 'Domain', 'value' => 'hosting.panelica.com', 'group' => 'general'],
             ['setting' => 'Logo', 'value' => '', 'group' => 'general'],
             ['setting' => 'DefaultLanguage', 'value' => 'en', 'group' => 'general'],
+            ['setting' => 'DefaultPaymentMethod', 'value' => 'banktransfer', 'group' => 'general'],
+            ['setting' => 'InvoiceNumberFormat', 'value' => 'INV-{year}{month}-{num}', 'group' => 'general'],
+            ['setting' => 'InvoiceNumberYearlyReset', 'value' => '0', 'group' => 'general'],
+            // InvoicePayTerms, EnableTax and TaxType used to be seeded here and
+            // were never read anywhere: due dates come from InvoiceDueDays and
+            // tax is decided per line. Seeding them invited editing a knob
+            // that is connected to nothing.
             ['setting' => 'DateFormat', 'value' => 'd/m/Y', 'group' => 'general'],
-            ['setting' => 'InvoicePayTerms', 'value' => '7', 'group' => 'billing'],
-            ['setting' => 'EnableTax', 'value' => 'true', 'group' => 'billing'],
-            ['setting' => 'TaxType', 'value' => 'inclusive', 'group' => 'billing'],
         ];
         foreach ($settings as $s) {
             Setting::firstOrCreate(['setting' => $s['setting']], $s);

@@ -48,48 +48,124 @@
                     <input type="text" id="last_name" name="last_name" value="{{ old("last_name", $user->last_name) }}" required class="form-control">
                 </div>
             </div>
-            <div class="form-group">
-                <label class="form-label" for="email">{{ __('common.form.email_address') }}<span class="req">*</span></label>
-                <input type="email" id="email" name="email" value="{{ old("email", $user->email) }}" required class="form-control">
+            <div class="form-grid-2">
+                <div class="form-group">
+                    <label class="form-label" for="email">{{ __('common.form.email_address') }}<span class="req">*</span></label>
+                    <input type="email" id="email" name="email" value="{{ old("email", $user->email) }}" required class="form-control">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="current_password">{{ __('client.account.current_password') }}</label>
+                    <input type="password" id="current_password" name="current_password" autocomplete="current-password" class="form-control">
+                    <div style="color:var(--muted);font-size:12px;margin-top:4px;">{{ __('client.account.email_change_needs_password') }}</div>
+                    @error('current_password')<div style="color:#c00;font-size:12px;margin-top:4px;">{{ $message }}</div>@enderror
+                </div>
+            </div>
+            <div style="margin-top:8px;padding-top:14px;border-top:1px solid var(--border,#e5e5e5);">
+                <div style="font-size:13px;font-weight:600;margin-bottom:2px;">{{ __('client.password.update_password') }}</div>
+                <div style="color:var(--muted);font-size:12px;margin-bottom:12px;">{{ __('client.password.page_subtitle') }}</div>
+                <div class="form-grid-2">
+                    <div class="form-group">
+                        <label class="form-label" for="new_password">{{ __('common.form.new_password') }}</label>
+                        <input type="password" id="new_password" name="new_password" autocomplete="new-password" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="new_password_confirmation">{{ __('client.password.confirm_new') }}</label>
+                        <input type="password" id="new_password_confirmation" name="new_password_confirmation" autocomplete="new-password" class="form-control">
+                    </div>
+                </div>
+                <div style="color:var(--muted);font-size:12px;">{{ __('client.password.min_chars') }}</div>
             </div>
             <div class="form-group">
                 <label class="form-label" for="company_name">{{ __('common.form.company_name') }}</label>
-                <input type="text" id="company_name" name="company_name" value="{{ old("company_name", $user->company_name) }}" class="form-control">
+                <input type="text" id="company_name" name="company_name" value="{{ old("company_name", $client?->company_name) }}" class="form-control">
             </div>
             <div class="form-grid-2">
                 <div class="form-group">
-                    <label class="form-label" for="phone_number">{{ __('common.form.phone_number') }}</label>
-                    <input type="text" id="phone_number" name="phone_number" value="{{ old("phone_number", $user->phone_number) }}" class="form-control">
+                    <label class="form-label" for="billing_email">{{ __('common.form.billing_email') }}</label>
+                    <input type="email" id="billing_email" name="billing_email" value="{{ old("billing_email", $client?->billing_email) }}" class="form-control">
+                    <div style="color:var(--muted);font-size:12px;margin-top:4px;">{{ __('client.account.billing_email_hint') }}</div>
                 </div>
+                <div class="form-group">
+                    <label class="form-label" for="phone_number">{{ __('common.form.phone_number') }}</label>
+                    <input type="text" id="phone_number" name="phone_number" value="{{ old("phone_number", $client?->phone_number) }}" class="form-control">
+                </div>
+            </div>
+            <div class="form-grid-2">
                 <div class="form-group">
                     <label class="form-label" for="country">{{ __('common.form.country') }}</label>
                     <select id="country" name="country" class="form-control">
                         <option value="">{{ __('common.form.select_country') }}</option>
                         @if(isset($countries))
                             @foreach($countries as $code => $name)
-                            <option value="{{ $code }}" {{ old("country", $user->country) == $code ? "selected" : "" }}>{{ $name }}</option>
+                            <option value="{{ $code }}" {{ old("country", $client?->country) == $code ? "selected" : "" }}>{{ $name }}</option>
                             @endforeach
                         @endif
                     </select>
                 </div>
+                @if(isset($languages) && $languages->isNotEmpty())
+                <div class="form-group">
+                    <label class="form-label" for="language">{{ __('common.form.language') }}</label>
+                    <select id="language" name="language" class="form-control">
+                        @foreach($languages as $lang)
+                        <option value="{{ $lang->code }}" {{ old("language", $client?->language) == $lang->code ? "selected" : "" }}>{{ $lang->native_name ?? $lang->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                @endif
             </div>
             <div class="form-group">
                 <label class="form-label" for="address1">{{ __('common.form.street_address') }}</label>
-                <input type="text" id="address1" name="address1" value="{{ old("address1", $user->address1) }}" class="form-control" placeholder="{{ __('common.form.street_address_placeholder') }}">
+                <input type="text" id="address1" name="address1" value="{{ old("address1", $client?->address1) }}" class="form-control" placeholder="{{ __('common.form.street_address_placeholder') }}">
             </div>
             <div class="form-grid-2">
                 <div class="form-group">
                     <label class="form-label" for="city">{{ __('common.form.city') }}</label>
-                    <input type="text" id="city" name="city" value="{{ old("city", $user->city) }}" class="form-control">
+                    <input type="text" id="city" name="city" value="{{ old("city", $client?->city) }}" class="form-control">
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="postcode">{{ __('common.form.postcode') }}</label>
-                    <input type="text" id="postcode" name="postcode" value="{{ old("postcode", $user->postcode) }}" class="form-control">
+                    <input type="text" id="postcode" name="postcode" value="{{ old("postcode", $client?->postcode) }}" class="form-control">
                 </div>
             </div>
+            @if(isset($customFields) && $customFields->isNotEmpty())
+            <div style="margin-top:8px;padding-top:14px;border-top:1px solid var(--border,#e5e5e5);">
+                <div style="font-size:13px;font-weight:600;margin-bottom:12px;">{{ __('client.profile.custom_fields') }}</div>
+                <div class="form-grid-2">
+                    @foreach($customFields as $field)
+                    @php($value = old("custom_fields.{$field->id}", $field->valueFor($client?->id)))
+                    <div class="form-group" @if($field->field_type === 'textarea') style="grid-column:span 2;" @endif>
+                        <label class="form-label" for="custom_field_{{ $field->id }}">{{ $field->field_name }}@if($field->required)<span class="req">*</span>@endif</label>
+                        @if($field->field_type === 'textarea')
+                            <textarea id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" rows="3" class="form-control" @if($field->required) required @endif>{{ $value }}</textarea>
+                        @elseif($field->field_type === 'select')
+                            <select id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" class="form-control" @if($field->required) required @endif>
+                                <option value="">{{ __('common.none') }}</option>
+                                @foreach($field->options() as $opt)
+                                <option value="{{ $opt }}" @if($value === $opt) selected @endif>{{ $opt }}</option>
+                                @endforeach
+                            </select>
+                        @elseif($field->field_type === 'checkbox')
+                            <div style="padding-top:6px;">
+                                <label style="display:flex;align-items:center;gap:6px;font-weight:400;">
+                                    <input type="checkbox" id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" value="1" @if($value) checked @endif> {{ __('admin.custom_fields.checkbox_yes') }}
+                                </label>
+                            </div>
+                        @elseif($field->field_type === 'number')
+                            <input type="number" id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" value="{{ $value }}" class="form-control" @if($field->required) required @endif>
+                        @elseif($field->field_type === 'date')
+                            <input type="date" id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" value="{{ $value }}" class="form-control" @if($field->required) required @endif>
+                        @else
+                            <input type="text" id="custom_field_{{ $field->id }}" name="custom_fields[{{ $field->id }}]" value="{{ $value }}" class="form-control" @if($field->regex) pattern="{{ $field->regex }}" @endif @if($field->required) required @endif>
+                        @endif
+                    </div>
+                    @endforeach
+                </div>
+            </div>
+            @endif
             <button type="submit" class="btn btn-primary">{{ __('common.actions.save_changes') }}</button>
         </form>
     </div>
 </div>
 
 @endsection
+

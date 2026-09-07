@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\SslOrder;
+use App\Mail\Concerns\LocalizesToRecipient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -13,10 +14,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class SslConfigurationRequiredMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public SslOrder $order,
-    ) {}
+    ) {
+        $this->localizeTo($this->order);
+    }
 
     public function envelope(): Envelope
     {
@@ -28,7 +32,7 @@ class SslConfigurationRequiredMail extends Mailable implements ShouldQueue
     public function content(): Content
     {
         return new Content(
-            view: 'emails.ssl-configuration-required',
+            markdown: 'emails.ssl-configuration-required',
             with: [
                 'order' => $this->order,
                 'configureUrl' => route('client.ssl.configure', $this->order),

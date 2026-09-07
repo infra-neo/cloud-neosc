@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="{{ request()->cookie('pnlcs_theme') === 'dark' ? 'dark' : 'light' }}">
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" dir="{{ $textDirection ?? 'ltr' }}" data-theme="{{ request()->cookie('pnlcs_theme') === 'dark' ? 'dark' : 'light' }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -24,7 +24,7 @@
 
     {{-- Fixed sections: topbar + navigation --}}
     @include('sections.topbar')
-    @include('sections.navigation')
+    @include('sections.navigation', ['apps' => $apps ?? []])
 
     {{-- Dynamic sections from DB --}}
     @foreach($sections as $section)
@@ -34,6 +34,7 @@
                 'content' => $sectionContent[$section->slug] ?? collect(),
                 'products' => $products ?? collect(),
                 'domainPricing' => $domainPricing ?? collect(),
+                'apps' => $apps ?? [],
             ])
         @endif
     @endforeach

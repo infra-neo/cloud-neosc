@@ -2,12 +2,18 @@
 
 namespace App\Http\Controllers\Client;
 
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Concerns\ResolvesClient;
+use App\Http\Controllers\Controller;
+use App\Mail\LoginEmailChangedMail;
+use App\Models\Client;
 use App\Models\Contact;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
@@ -46,12 +52,25 @@ class AccountController extends Controller
         $client = $this->currentClient();
         // The blade renders a country <select> from $countries; without it the
         // dropdown had nothing but its placeholder and no country could be set.
-        $countries = self::COUNTRIES;
+        $countries = \App\Support\Countries::all();
+
+        // Active languages the client may set as their preferred email/UI language.
+        $languages = \App\Models\Language::getActiveLanguages();
 
         // Most logins have one account and never see the switch.
         $accounts = $user->clients()->orderBy('id')->get();
 
-        return view('client.account.profile', compact('user', 'client', 'countries', 'accounts'));
+        // Custom fields the client is allowed to see and edit (admin-only ones
+        // stay out of the client area entirely), with the values already set.
+        $customFields = collect();
+        if ($client) {
+            $customFields = \App\Models\CustomField::clientFields()
+                ->where('admin_only', false)
+                ->with(['values' => fn ($q) => $q->where('rel_id', $client->id)])
+                ->get();
+        }
+
+        return view('client.account.profile', compact('user', 'client', 'countries', 'accounts', 'customFields', 'languages'));
     }
 
     public function updateProfile(Request $request)
@@ -63,15 +82,37 @@ class AccountController extends Controller
             'first_name' => 'required|string|max:100',
             'last_name' => 'required|string|max:100',
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'billing_email' => 'nullable|email|max:255',
             'company_name' => 'nullable|string|max:255',
             'address1' => 'nullable|string|max:255',
             'address2' => 'nullable|string|max:255',
             'city' => 'nullable|string|max:100',
             'state' => 'nullable|string|max:100',
             'postcode' => 'nullable|string|max:20',
-            'country' => 'nullable|string|max:2',
+            // The column will not hold null, so asking is better than crashing.
+            'country' => 'required|string|size:2',
             'phone_number' => 'nullable|string|max:50',
+            'language' => 'nullable|string|max:10',
+            'new_password' => ['nullable', 'confirmed', Password::min(8)->mixedCase()->numbers()],
+            'new_password_confirmation' => 'required_with:new_password|string',
         ]);
+
+        $previousEmail = (string) $user->email;
+        $changingLogin = strcasecmp($previousEmail, (string) $request->email) !== 0;
+        $changingPassword = ! empty($request->new_password);
+
+        // The sign-in address is where a password reset is delivered, so
+        // changing it is as good as changing the password - and that asks for
+        // the current one. Setting a new password also asks for it.
+        if ($changingLogin || $changingPassword) {
+            $request->validate(['current_password' => 'required|string']);
+
+            if (! Hash::check((string) $request->current_password, (string) $user->password)) {
+                return back()->withInput()->withErrors([
+                    'current_password' => __('messages.error.current_password_incorrect'),
+                ]);
+            }
+        }
 
         $user->update([
             'first_name' => $request->first_name,
@@ -79,11 +120,41 @@ class AccountController extends Controller
             'email' => $request->email,
         ]);
 
+        if ($changingPassword) {
+            $user->update(['password' => Hash::make($request->new_password)]);
+
+            // A "remember me" cookie signs its holder in on its own for as long
+            // as the token behind it stays put. Changing the password is how
+            // somebody ends a session they did not start, so the token goes
+            // with it and the cookie stops working - this one included, which
+            // is why the current session is re-remembered below.
+            $user->setRememberToken(Str::random(60));
+            $user->save();
+
+            Auth::guard('web')->login($user, true);
+        }
+
+        if ($changingLogin) {
+            // The address losing the account hears about it; that is the one
+            // warning somebody has if it was not them.
+            try {
+                Mail::to($previousEmail)->send(
+                    new LoginEmailChangedMail($previousEmail, (string) $request->email)
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Could not tell the previous address its account moved', [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         if ($client) {
             $client->update([
                 'first_name' => $request->first_name,
                 'last_name' => $request->last_name,
                 'email' => $request->email,
+                'billing_email' => $request->billing_email,
                 'company_name' => $request->company_name,
                 'address1' => $request->address1,
                 'address2' => $request->address2,
@@ -92,7 +163,36 @@ class AccountController extends Controller
                 'postcode' => $request->postcode,
                 'country' => $request->country,
                 'phone_number' => $request->phone_number,
+                // clients.language is NOT NULL; a profile update that does not
+                // carry the field must keep the current value, not null it.
+                'language' => $request->input('language') ?: $client->language,
             ]);
+        }
+
+        // Custom field values editable from the client area (admin-only fields
+        // are never rendered, so only the visible ones are ever submitted).
+        if ($client) {
+            $visibleFields = \App\Models\CustomField::clientFields()
+                ->where('admin_only', false)
+                ->get()
+                ->keyBy('id');
+
+            foreach ($visibleFields as $id => $field) {
+                $raw = $request->input("custom_fields.$id");
+
+                $value = is_array($raw) ? implode(', ', array_filter((array) $raw)) : (string) $raw;
+
+                if ($value === '') {
+                    \App\Models\CustomFieldValue::where('field_id', $id)->where('rel_id', $client->id)->delete();
+
+                    continue;
+                }
+
+                \App\Models\CustomFieldValue::updateOrCreate(
+                    ['field_id' => $id, 'rel_id' => $client->id],
+                    ['value' => $value]
+                );
+            }
         }
 
         return redirect()->route('client.account.profile')
@@ -119,6 +219,16 @@ class AccountController extends Controller
         }
 
         $user->update(['password' => Hash::make($request->password)]);
+
+        // A "remember me" cookie signs its holder in on its own for as long as
+        // the token behind it stays put. Changing the password is how somebody
+        // ends a session they did not start, so the token goes with it and the
+        // cookie stops working - this one included, which is why the current
+        // session is re-remembered below.
+        $user->setRememberToken(Str::random(60));
+        $user->save();
+
+        Auth::guard('web')->login($user, true);
 
         return redirect()->route('client.account.password')
             ->with('success', __('messages.success.password_changed'));
@@ -156,18 +266,31 @@ class AccountController extends Controller
             'phone_number' => 'nullable|string|max:50',
         ]);
 
-        Contact::create([
+        // Only the preferences the form actually asked about. The add form has
+        // no boxes for these - they are on the edit form below it - and a box
+        // that is not on the form is a box nobody unticked, so writing
+        // boolean() for all five made every new contact receive nothing. Left
+        // alone, the columns take their own defaults, which is every kind.
+        $kinds = ['general_emails', 'product_emails', 'domain_emails', 'invoice_emails', 'support_emails'];
+        $preferences = [];
+
+        // A form that asks is answered exactly as it was ticked, unticked boxes
+        // included - the same way the edit form below is handled. A form that
+        // does not ask at all is not an answer of "none": leave the columns to
+        // their own defaults, which is every kind.
+        if (array_filter($kinds, fn ($kind) => $request->has($kind))) {
+            foreach ($kinds as $kind) {
+                $preferences[$kind] = $request->boolean($kind);
+            }
+        }
+
+        Contact::create($preferences + [
             'client_id' => $client->id,
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
             'email' => $request->email,
             'company_name' => $request->company_name,
             'phone_number' => $request->phone_number,
-            'general_emails' => $request->boolean('general_emails'),
-            'product_emails' => $request->boolean('product_emails'),
-            'domain_emails' => $request->boolean('domain_emails'),
-            'invoice_emails' => $request->boolean('invoice_emails'),
-            'support_emails' => $request->boolean('support_emails'),
         ]);
 
         return redirect()->route('client.account.contacts')
@@ -180,7 +303,7 @@ class AccountController extends Controller
      * Most customers have exactly one and never see this; the client area used
      * to answer with the first account whatever the login was attached to.
      */
-    public function switchAccount(\App\Models\Client $client)
+    public function switchAccount(Client $client)
     {
         abort_unless(auth()->user()->clients()->whereKey($client->id)->exists(), 403);
 
@@ -233,7 +356,10 @@ class AccountController extends Controller
                 ->get()
             : collect();
 
-        return view('client.account.security', compact('user', 'twoFactorEnabled', 'sessions', 'sessionsSupported'));
+        $client = $this->currentClient();
+        $phoneVerifyAvailable = app(\App\Services\Sms\TwilioVerifyClient::class)->enabled();
+
+        return view('client.account.security', compact('user', 'twoFactorEnabled', 'sessions', 'sessionsSupported', 'client', 'phoneVerifyAvailable'));
     }
 
     public function logoutSession(string $sessionId)

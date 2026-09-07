@@ -27,6 +27,75 @@
     @csrf
     <input type="hidden" name="product_id" value="{{ $product->id }}">
 
+    @php $res = $product->resourceSummary(); @endphp
+    @if($res)
+    {{-- The limits the order actually buys, so the choice of app can be made
+         against them rather than after the fact. --}}
+    <div class="pn-card" style="margin-bottom:16px;">
+        <div class="pn-card-header">{{ __('client.store.included_resources') }}</div>
+        <div class="pn-card-body">
+            <ul class="pn-res-row">
+                @foreach($res as $r)
+                <li><i class="{{ $r['icon'] }}"></i>{{ $r['text'] }}</li>
+                @endforeach
+            </ul>
+            <p class="pn-res-note">{{ __('client.store.res_shared_note') }}</p>
+        </div>
+    </div>
+    @endif
+
+    @if(! empty($apps))
+    {{-- One product, any app. Selling ninety-eight apps as ninety-eight
+         products does not scale, so the choice is made here and the order
+         installs it. --}}
+    <div class="pn-card" style="margin-bottom:16px;">
+        <div class="pn-card-header">{{ __('client.cart.choose_app') }} <span class="ap-opt">{{ __('client.cart.app_optional') }}</span></div>
+        <div class="pn-card-body">
+            <p class="ap-intro">{{ __('client.cart.app_intro') }}</p>
+            <div class="ap-search">
+                <input type="text" id="ap-q" class="form-control" autocomplete="off"
+                       placeholder="{{ __('client.cart.app_search_ph') }}" oninput="apFilter()"
+                       onkeydown="if(event.key==='Enter')event.preventDefault()">
+                <span class="ap-count" id="ap-count">{{ __('client.cart.app_count', ['count' => count($apps)]) }}</span>
+            </div>
+            <input type="hidden" name="app_slug" id="ap-slug" value="{{ old('app_slug') }}">
+            <div class="ap-grid">
+                @foreach($apps as $a)
+                @php
+                    $hue = crc32($a['slug']) % 360;
+                    $initial = mb_strtoupper(mb_substr(trim($a['name']) ?: $a['slug'], 0, 1));
+                    $line = $a['tagline'] ?: $a['description'];
+                @endphp
+                <div class="ap-app{{ old('app_slug') === $a['slug'] ? ' on' : '' }}" data-slug="{{ $a['slug'] }}"
+                     data-find="{{ mb_strtolower($a['name'].' '.$a['slug'].' '.$line.' '.implode(' ', $a['categories'] ?? [])) }}"
+                     onclick="apPick(this)" title="{{ $line }}">
+                    @if($a['is_featured'])<span class="ap-star" title="{{ __('client.cart.app_featured') }}">&#9733;</span>@endif
+                    @if($a['logo_url_local'])
+                        <img src="{{ $a['logo_url_local'] }}" alt="" loading="lazy" class="ap-logo">
+                    @else
+                        <div class="ap-mark" style="background:hsl({{ $hue }},62%,94%);color:hsl({{ $hue }},52%,34%);border-color:hsl({{ $hue }},45%,84%)">{{ $initial }}</div>
+                    @endif
+                    <div class="ap-nm">{{ $a['name'] }}</div>
+                    <div class="ap-ds">{{ $line }}</div>
+                    @if(($a['extra_services'] ?? 0) > 0 || ($a['min_memory_mb'] ?? 0) > 0)
+                    <div class="ap-req">
+                        @if(($a['min_memory_mb'] ?? 0) > 0)<span>{{ $a['min_memory_mb'] >= 1024 ? round($a['min_memory_mb']/1024, 1).' GB' : $a['min_memory_mb'].' MB' }}</span>@endif
+                        @if(($a['extra_services'] ?? 0) > 0)<span>{{ trans_choice('client.hosting.containers.services', $a['extra_services'] + 1, ['count' => $a['extra_services'] + 1]) }}</span>@endif
+                    </div>
+                    @endif
+                </div>
+                @endforeach
+            </div>
+            <div class="ap-none" id="ap-none" hidden>{{ __('client.cart.app_search_none') }}</div>
+            <div class="ap-clearpick" id="ap-clearpick" hidden>
+                <span id="ap-picked"></span>
+                <button type="button" onclick="apClear()">{{ __('client.cart.app_clear') }}</button>
+            </div>
+            @error('app_slug')<div class="text-danger" style="font-size:12px;margin-top:8px">{{ $message }}</div>@enderror
+        </div>
+    </div>
+    @endif
+
     <div class="config-layout">
         <div>
             {{-- Billing Cycle --}}
@@ -47,7 +116,7 @@
                                 </label>
                             @endforeach
                         @else
-                            <div style="color:#999; font-size:13px; grid-column:1/-1;">{{ __('client.cart.no_pricing') }}</div>
+                            <div style="color:var(--muted); font-size:13px; grid-column:1/-1;">{{ __('client.cart.no_pricing') }}</div>
                         @endif
                     </div>
                 </div>
@@ -77,7 +146,7 @@
                                            value="{{ $previous ?? $option->qty_minimum ?? 0 }}"
                                            min="{{ $option->qty_minimum ?? 0 }}"
                                            @if($option->qty_maximum) max="{{ $option->qty_maximum }}" @endif>
-                                    <small style="color:#777;">
+                                    <small style="color:var(--muted);">
                                         {{ $currency?->prefix }}{{ number_format($unit?->priceFor($selectedCycle) ?? 0, 2) }}
                                         {{ __('client.cart.per_unit') }}
                                     </small>
@@ -139,10 +208,10 @@
                             <span>
                                 <strong>{{ $addon->name }}</strong>
                                 @if($addonPrice > 0)
-                                    <span style="color:#777;">(+{{ $currency?->prefix }}{{ number_format($addonPrice, 2) }})</span>
+                                    <span style="color:var(--muted);">(+{{ $currency?->prefix }}{{ number_format($addonPrice, 2) }})</span>
                                 @endif
                                 @if($addon->description)
-                                    <br><small style="color:#777;">{{ $addon->description }}</small>
+                                    <br><small style="color:var(--muted);">{{ $addon->description }}</small>
                                 @endif
                             </span>
                         </label>
@@ -175,7 +244,7 @@
 
             {{-- Additional Notes --}}
             <div class="pn-card">
-                <div class="pn-card-header">{{ __('client.cart.additional_notes') }} <span style="font-weight:400; color:#999;">({{ __('client.form.optional') }})</span></div>
+                <div class="pn-card-header">{{ __('client.cart.additional_notes') }} <span style="font-weight:400; color:var(--muted);">({{ __('client.form.optional') }})</span></div>
                 <div class="pn-card-body">
                     <textarea name="notes" rows="3" class="form-control" placeholder="{{ __('client.cart.special_requirements') }}">{{ old('notes') }}</textarea>
                 </div>
@@ -188,11 +257,11 @@
                 <div class="pn-card-header">{{ __('client.cart.order_summary') }}</div>
                 <div class="pn-card-body">
                     <div class="summary-row">
-                        <span style="color:#777;">{{ __('client.cart.product') }}</span>
+                        <span style="color:var(--muted);">{{ __('client.cart.product') }}</span>
                         <span style="font-weight:500;">{{ $product->name }}</span>
                     </div>
                     <div class="summary-row">
-                        <span style="color:#777;">{{ __('client.cart.billing_cycle') }}</span>
+                        <span style="color:var(--muted);">{{ __('client.cart.billing_cycle') }}</span>
                         <span id="summaryBilling">&mdash;</span>
                     </div>
                     <div class="summary-row">
@@ -219,7 +288,68 @@ document.querySelectorAll('input[name=billing_cycle]').forEach(function(radio) {
 });
 var first = document.querySelector('input[name=billing_cycle]:checked');
 if (first) { first.dispatchEvent(new Event('change')); }
+
+function apPick(el){
+    document.querySelectorAll('.ap-app').forEach(function(a){ a.classList.remove('on'); });
+    el.classList.add('on');
+    document.getElementById('ap-slug').value = el.getAttribute('data-slug') || '';
+    var name = (el.querySelector('.ap-nm') || {}).textContent || '';
+    document.getElementById('ap-picked').textContent = name;
+    document.getElementById('ap-clearpick').hidden = false;
+}
+
+// Choosing an app is optional: the hosting is the product, so it has to be
+// possible to change your mind and order without one.
+function apClear(){
+    document.querySelectorAll('.ap-app').forEach(function(a){ a.classList.remove('on'); });
+    document.getElementById('ap-slug').value = '';
+    document.getElementById('ap-clearpick').hidden = true;
+}
+function apFilter(){
+    var q = (document.getElementById('ap-q').value || '').toLowerCase().trim();
+    var terms = q ? q.split(/\s+/) : [];
+    var shown = 0;
+    document.querySelectorAll('.ap-app').forEach(function(a){
+        var hay = a.getAttribute('data-find') || '';
+        var ok = terms.every(function(t){ return hay.indexOf(t) !== -1; });
+        a.hidden = !ok;
+        if (ok) shown++;
+    });
+    document.getElementById('ap-none').hidden = shown !== 0;
+    var c = document.getElementById('ap-count');
+    c.textContent = c.getAttribute('data-tpl').replace(':count', shown);
+}
+document.addEventListener('DOMContentLoaded', function(){
+    var c = document.getElementById('ap-count');
+    if (c) c.setAttribute('data-tpl', @json(__('client.cart.app_count', ['count' => ':count'])));
+});
 </script>
+<style>
+    .ap-search{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .ap-count{font-size:11.5px;color:var(--muted);white-space:nowrap}
+    .ap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+    .ap-app{border:1px solid var(--border);border-radius:11px;padding:12px 10px;text-align:center;cursor:pointer;
+        background:var(--bg);transition:transform .14s,border-color .14s;position:relative}
+    .ap-app:hover{transform:translateY(-2px);border-color:var(--primary)}
+    .ap-app.on{border-color:var(--primary);background:var(--primary-light);box-shadow:0 0 0 1px var(--primary) inset}
+    .ap-logo,.ap-mark{width:38px;height:38px;margin:0 auto 8px;display:block;object-fit:contain}
+    .ap-mark{border-radius:10px;border:1px solid;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:800}
+    .ap-nm{font-size:12.5px;font-weight:700;line-height:1.25;color:var(--text)}
+    .ap-ds{font-size:10.5px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ap-star{position:absolute;top:6px;right:7px;color:#f0a92b;font-size:11px;line-height:1}
+    .pn-res-row{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:10px 22px}
+    .pn-res-row li{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text)}
+    .pn-res-row i{font-size:15px;color:var(--primary)}
+    .pn-res-note{font-size:11.5px;color:var(--muted);margin:12px 0 0;line-height:1.5}
+    .ap-req{display:flex;justify-content:center;gap:5px;flex-wrap:wrap;margin-top:6px}
+    .ap-req span{font-size:10px;font-weight:600;color:var(--muted);background:rgba(127,127,127,.09);border-radius:5px;padding:2px 5px}
+    .ap-opt{font-size:11px;font-weight:600;color:var(--muted);margin-left:6px}
+    .ap-intro{font-size:12.5px;color:var(--muted);margin:0 0 12px;line-height:1.5}
+    .ap-clearpick{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:12.5px}
+    .ap-clearpick span{font-weight:700}
+    .ap-clearpick button{background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline;padding:0}
+    .ap-none{padding:18px;text-align:center;color:var(--muted);font-size:13px}
+</style>
 @endsection
 
 @endsection

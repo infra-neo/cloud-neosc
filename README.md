@@ -1,23 +1,30 @@
+<p align="center">
+  <a href="https://pnlcs.com/"><b>pnlcs.com</b></a>
+</p>
+
 <h1 align="center">PNLCS</h1>
 
 <p align="center">
   <b>Open-source, self-hosted hosting billing platform — a free WHMCS alternative.</b><br>
-  Client portal · invoicing · domain &amp; SSL management · support tickets · reseller hosting.
+  Client portal · invoicing · domain &amp; SSL management · support tickets · reseller hosting.<br>
+  <b>Customers manage their hosting from the billing portal itself</b> — files, mail,
+  databases, FTP, subdomains, DNS, cron and backups.
 </p>
 
 <p align="center">
-  Built with <b>Laravel 13</b> · <b>PHP 8.3+</b> · <b>MySQL 8</b> · <b>Alpine.js</b> · <b>Tailwind CSS 4</b>
+  Built with <b>Laravel 13</b> · <b>PHP 8.4+</b> · <b>MySQL 8</b> · <b>Alpine.js</b> · <b>Tailwind CSS 4</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/Panelica/pnlcs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Panelica/pnlcs?color=blue" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel" alt="Laravel 13">
-  <img src="https://img.shields.io/badge/PHP-8.3%2B-777BB4?logo=php&logoColor=white" alt="PHP 8.3+">
+  <img src="https://img.shields.io/badge/PHP-8.4%2B-777BB4?logo=php&logoColor=white" alt="PHP 8.4+">
   <img src="https://img.shields.io/badge/MySQL-8.0%2B-4479A1?logo=mysql&logoColor=white" alt="MySQL 8.0+">
   <a href="https://github.com/Panelica/pnlcs/stargazers"><img src="https://img.shields.io/github/stars/Panelica/pnlcs?style=social" alt="Stars"></a>
 </p>
 
 <p align="center">
+  <a href="https://pnlcs.com/"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20Website-pnlcs.com-4051A9?style=for-the-badge&logoColor=white" alt="Website — pnlcs.com"></a>
   <a href="https://hosting.panelica.com/"><img src="https://img.shields.io/badge/%F0%9F%9A%80%20Live%20Demo-hosting.panelica.com-22C55E?style=for-the-badge&logoColor=white" alt="Live Demo — hosting.panelica.com"></a>
 </p>
 
@@ -26,6 +33,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pnlcs.com/"><b>Website</b></a> ·
   <a href="https://hosting.panelica.com/"><b>Live Demo</b></a> ·
   <a href="https://panelica.github.io/pnlcs/">Documentation</a> ·
   <a href="#quick-start-with-docker">Docker</a> ·
@@ -111,7 +119,10 @@ hosting — a fresh alternative to cPanel, Plesk, and CyberPanel.
 
 PNLCS integrates natively with Panelica through the built-in **Panelica server
 module**: sell hosting plans and accounts are provisioned on your Panelica
-servers automatically.
+servers automatically — and the customer then manages that hosting (files,
+mailboxes, databases, FTP, subdomains, DNS, cron, backups) **from the billing
+portal itself**, with every action fenced to their own account. See
+[Hosting Management from Inside Billing](#hosting-management-from-inside-billing).
 
 **Not only Panelica.** PNLCS is control-panel agnostic — you can connect and
 provision on **cPanel, Plesk, DirectAdmin, HestiaCP, Proxmox, and Vultr** too,
@@ -149,6 +160,28 @@ Panelica is simply where PNLCS feels most at home.
 ![Homepage (Coral theme)](docs/screenshots/homepage-coral-theme.png)
 *Same site with a different built-in theme applied — one click to switch*
 
+![One-click apps on the homepage](docs/screenshots/homepage-apps.png)
+*The app showcase: 98 applications a customer can install into their hosting,
+with the logos shipped in the repository. Heading, copy, button and how many
+apps to show are all editable from the admin Homepage screen*
+
+### Client Portal — Hosting Management
+
+![Hosting management tools](docs/screenshots/client-hosting-tools.png)
+*A customer's hosting service: live resource usage from the server and eight
+working tools — files, mail, databases, FTP, subdomains, DNS, cron, backups.
+[Full detail below](#hosting-management-from-inside-billing)*
+
+![Backups](docs/screenshots/client-backups.png)
+*Restore points with size, contents and encryption state — fenced to the
+customer's own domains*
+
+![App catalogue](docs/screenshots/client-apps.png)
+*Installing an app from the customer's own control panel: searchable, grouped
+the way people shop, and every card states the memory the app needs and how
+many containers it starts. An app that wants more than the plan allows is
+marked before it is chosen, not after it fails*
+
 ---
 
 ## Hosting Billing Features
@@ -169,6 +202,8 @@ Panelica is simply where PNLCS feels most at home.
 - **SSL certificates** — CSR generation, approver emails, auto-install
 - **Affiliate program** — referral tracking, commission payouts
 - **Account security** — 2FA (TOTP), login alerts, session history
+- **Hosting management** — files, mailboxes, databases, FTP, subdomains,
+  cron, DNS and backups, without leaving billing ([details below](#hosting-management-from-inside-billing))
 
 ### 🛡️ Admin Panel
 
@@ -237,15 +272,80 @@ Panelica is simply where PNLCS feels most at home.
 
 ---
 
+## Hosting Management from Inside Billing
+
+Most billing platforms stop at "here is your control panel password." PNLCS
+does the day-to-day hosting work **in the billing portal itself**, so a customer
+who wants to add a mailbox or a DNS record never has to learn a second interface.
+
+![Hosting management tools](docs/screenshots/client-hosting-tools.png)
+*A hosting service in the client portal — live CPU/memory/disk/bandwidth from the
+server, and eight working tools underneath*
+
+Available on services provisioned through the **Panelica server module**
+(the module tells the portal which tools that account may use):
+
+| Tool | What the customer can do |
+|------|--------------------------|
+| **File Manager** | Browse, upload, download, edit, rename, create folders and delete |
+| **Email Accounts** | Create and delete mailboxes, change passwords, open webmail |
+| **Databases** | Create MySQL databases and users, reset user passwords, open phpMyAdmin |
+| **FTP Accounts** | Create accounts, change passwords, delete — with host/port shown |
+| **Subdomains** | Create and remove subdomains; the panel provisions the real vhost, document root, PHP-FPM pool, SSL and DNS |
+| **DNS Zone** | Add, edit and delete A / AAAA / CNAME / MX / TXT / SRV / CAA records |
+| **Cron Jobs** | Schedule commands, run one immediately and read its output, pause/resume, delete |
+| **Backups** | Take restore points, see size and contents, delete old ones |
+
+### Everything is fenced to the customer's own account
+
+The server API key a billing platform holds is operator-wide — it can see every
+account on the box. That is exactly the mistake this integration does not make:
+**every list is filtered against the domains that belong to the service being
+viewed**, and every write is checked the same way before it is sent.
+
+- A backup archive that also covers somebody else's domain is not shown, and
+  cannot be deleted.
+- A cron job, subdomain or DNS record on a foreign domain is rejected before a
+  request leaves the billing server.
+- Plan limits are read from the customer's hosting plan — `max_subdomains`,
+  `max_cron_jobs`, `cron_jobs_enabled`, `backup_enabled` — and the create form
+  is gated on them (the panel enforces them again, independently).
+
+### The records that keep a site online stay read-only
+
+![DNS zone editor](docs/screenshots/client-dns-zone.png)
+*One zone at a time, records ordered the way an operator reads them, and the
+delegation and apex records locked*
+
+A zone editor in a billing panel is a fast way for a customer to take their own
+site offline. So the records the hosting itself depends on — `SOA`, `NS`, and the
+apex/`www` `A` records pointing at the server — are shown as **Managed** and
+cannot be edited, renamed into, or deleted here. Renaming an ordinary record
+*into* one of those names is blocked too. The hosting panel remains the place to
+override that deliberately.
+
+The same restraint applies elsewhere: **restoring** a backup is not offered in
+billing (it silently discards everything written since the archive was taken),
+and cron commands run as the account's own unprivileged system user inside the
+panel's namespace and cgroup isolation — never as root.
+
+![Cron jobs](docs/screenshots/client-cron.png)
+*Common schedules or a full five-field expression, with example commands that
+fill in the customer's real domain path*
+
+---
+
 ## Requirements
 
 | Component | Minimum |
 |-----------|---------|
-| PHP       | 8.3 or 8.4 |
+| PHP       | **8.4** (the locked Symfony 8 dependencies require it — 8.3 installs, then answers every request with a 500) |
 | MySQL     | 8.0 (or MariaDB 10.6) |
 | Node.js   | 18+ |
 | Composer  | 2.x |
 | Web server | Nginx or Apache with PHP-FPM |
+| Disk | **~130 MB** for the app itself (code + PHP dependencies + built assets); the Docker image is ~410 MB. Allow **at least 2 GB free** for the database, ticket/backup uploads and logs as they grow. `node_modules` (~100 MB) is only needed while building and can be removed afterwards. |
+| RAM | 1 GB works for a small install; 2 GB is comfortable with the database on the same box |
 | PHP extensions | `bcmath`, `curl`, `dom`, `fileinfo`, `gd`, `mbstring`, `mysqli`, `openssl`, `pdo_mysql`, `tokenizer`, `xml`, `zip`, `imap` |
 
 **Optional but recommended:** Redis (session/cache), SMTP server or relay
@@ -273,7 +373,7 @@ docker run -d --name pnlcs --network pnlcs-net -p 8090:80 \
   -e DB_HOST=pnlcs-db -e DB_DATABASE=pnlcs \
   -e DB_USERNAME=pnlcs -e DB_PASSWORD=changeme \
   -e APP_URL=http://localhost:8090 \
-  panelica/pnlcs-runtime:1.3
+  panelica/pnlcs-runtime:1.4
 ```
 
 Wait 3–5 minutes for the first start (composer install + npm build), then
@@ -295,6 +395,57 @@ production deployment notes:**
 ---
 
 ## Self-Hosted Installation
+
+### 0. Prepare the server
+
+Skip this if PHP, MySQL, Node and Composer are already installed (a control
+panel such as Panelica gives you all of them).
+
+**Ubuntu 24.04 / Debian 13**
+
+```bash
+# PHP 8.4 with the extensions PNLCS needs.
+# Ubuntu 24.04 ships 8.3 in its own repos, which is not enough - add the
+# ondrej PPA first. Debian 13 carries 8.4 natively; skip the PPA line there.
+sudo add-apt-repository -y ppa:ondrej/php   # Ubuntu only
+sudo apt update
+sudo apt install -y php8.4-fpm php8.4-cli php8.4-mysql php8.4-mbstring \
+  php8.4-xml php8.4-curl php8.4-zip php8.4-gd php8.4-bcmath php8.4-intl php8.4-imap
+
+# Database
+sudo apt install -y mysql-server        # or: mariadb-server
+
+# Web server
+sudo apt install -y nginx
+
+# Node.js 20 LTS (for building the frontend assets)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Composer
+curl -sS https://getcomposer.org/installer | php
+sudo mv composer.phar /usr/local/bin/composer
+```
+
+**RHEL family (AlmaLinux 9 / Rocky 9)**
+
+```bash
+sudo dnf install -y epel-release https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+sudo dnf module reset php -y && sudo dnf module enable php:remi-8.4 -y
+sudo dnf install -y php php-fpm php-mysqlnd php-mbstring php-xml php-gd \
+  php-bcmath php-intl php-imap mysql-server nginx
+curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+sudo dnf install -y nodejs
+```
+
+Check what you have:
+
+```bash
+php -v          # 8.4 or newer — 8.3 will 500 at runtime
+mysql --version # 8.0 / MariaDB 10.6 or newer
+node -v         # 18 or newer
+composer -V     # 2.x
+```
 
 ### 1. Clone the repository
 
@@ -349,22 +500,27 @@ unless you know what you're doing (some migrations use MySQL-specific SQL).
 php artisan key:generate
 ```
 
-### 6. Run migrations and seed default data
+### 6. Run migrations
 
 ```bash
 php artisan migrate --force
-php artisan db:seed --force
 ```
 
-The seeder creates:
+**Do not run `php artisan db:seed` here.** The install wizard you will open
+in step 12 runs the seeder itself and renames the seeded administrator to the
+username and password *you* choose. Seeding by hand creates an administrator
+first - and the wizard, seeing one, locks itself before you ever reach it,
+leaving you with a default `admin` / `admin123` account you never chose.
 
-- A default admin account: **`admin` / `admin123`** (change this immediately
-  after your first login)
-- Four starter currencies (USD, EUR, GBP, TRY)
-- Ticket departments, statuses, email templates
-- 30 language entries (English active by default)
-- 2,232 English translation keys
-- Default homepage sections and domain pricing rows
+The wizard's seeding provides everything an installation starts with: four
+starter currencies (USD, EUR, GBP, TRY), ticket departments and statuses,
+25 email templates, 30 languages, the full translation set, the knowledge
+base, and default homepage sections.
+
+*Headless installs only:* if you are scripting an installation with no
+browser step at all, `php artisan db:seed --force` is how you seed - the
+default administrator is then `admin` / `admin123`, the wizard stays closed
+by design, and changing that password is your first job.
 
 ### 7. Build frontend assets
 
@@ -398,8 +554,53 @@ chown -R www-data:www-data storage bootstrap/cache
 
 Whatever you use — a control panel, raw Nginx, Apache, Caddy — make sure
 **the document root is the `public/` directory**, not the project root.
+Pointing it at the project root exposes `.env`, so this is the one step worth
+double-checking.
 
-### 12. Schedule the cron runner
+**Nginx example** (`/etc/nginx/sites-available/pnlcs`):
+
+```nginx
+server {
+    listen 80;
+    server_name billing.example.com;
+    root /var/www/pnlcs/public;      # note: /public
+
+    index index.php;
+    charset utf-8;
+    client_max_body_size 64M;        # ticket + backup uploads
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.(?!well-known).* { deny all; }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/pnlcs /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Add HTTPS with Certbot (`sudo certbot --nginx -d billing.example.com`) before
+taking payments — the checkout and admin login should never run over plain HTTP.
+
+### 12. Open the install wizard
+
+Visit **https://billing.example.com/install** in your browser. The wizard
+checks requirements, seeds the database, asks for your administrator
+username and password, and takes the application name and URL - then locks
+itself permanently. This is where your admin account is created; there is no
+default password to change afterwards.
+
+### 13. Schedule the cron runner
 
 Add a single line to the web user's crontab (`crontab -e`):
 
@@ -410,10 +611,14 @@ Add a single line to the web user's crontab (`crontab -e`):
 This drives invoice generation, payment reminders, automatic suspensions,
 SSL polling, and other background tasks.
 
-### 13. Run a queue worker (optional but recommended)
+### 14. Queue: sync by default, worker only if you switch
 
-Email delivery and background jobs run through the queue. A simple
-`supervisor` entry:
+`.env.example` ships `QUEUE_CONNECTION=sync`: mail and background jobs run
+inline and always happen, which is the right shape for a single-server
+install. Switch to `database` only **together with** a running worker - the
+database driver without a worker puts every queued email into the jobs table
+forever, and nothing sends while everything looks fine. A simple `supervisor`
+entry for that setup:
 
 ```ini
 [program:pnlcs-worker]
@@ -422,6 +627,171 @@ autostart=true
 autorestart=true
 user=www-data
 ```
+
+
+### Installing inside a hosting-panel account (Panelica, cPanel, …)
+
+If the server runs a control panel, you do not need root or any of step 0 -
+the panel already carries PHP, MySQL and (on Panelica) Node. This is the
+exact shape our own production installs use:
+
+1. Create the hosting account and its domain in the panel, and set the
+   domain's **PHP version to 8.4** - this is the step that bites: if the
+   site's PHP-FPM stays at 8.3 while you ran composer with a 8.4 CLI, every
+   request answers `500 - Composer detected issues in your platform`.
+2. Create the MySQL database and user from the panel. Panels prefix names
+   (`account_pnlcs`) - put the prefixed name in `.env`.
+3. As the account user, clone into the site directory - **next to** the
+   webroot, not inside it:
+   `cd ~/example.com && git clone https://github.com/Panelica/pnlcs.git pnlcs`
+4. `composer install`, `.env`, `key:generate`, `migrate --force` as in steps
+   2-6, using the panel's PHP 8.4 binary (on Panelica: `php84`). If MySQL
+   listens on a socket, add `DB_SOCKET=` with the panel's socket path.
+5. Build the assets with the panel's Node (on Panelica, install one under
+   Node.js Versions and use its `npm`).
+6. Point the webroot at `pnlcs/public` with a same-owner symlink:
+   `mv public_html public_html.default && ln -s pnlcs/public public_html`.
+   A symlink owned by the same account passes the panel's
+   `disable_symlinks if_not_owner` protection.
+7. Add the cron line from step 13 as a panel cron job for the account.
+8. Open `https://example.com/install` and finish the wizard.
+
+---
+
+## Updating
+
+PNLCS updates in place — latest code, database migrations, and rebuilt frontend
+assets — without touching your data.
+
+### Docker
+
+One command pulls the latest release into a running container:
+
+```bash
+docker exec pnlcs /usr/local/bin/update.sh
+```
+
+It runs `git reset --hard origin/main` → `composer install` → `php artisan migrate`
+→ `npm run build` → cache rebuild → php-fpm reload. Your database and uploaded
+files live on the `pnlcs_app` volume and are left untouched.
+
+Set `AUTO_UPDATE=1` on the container to pull the latest code automatically on
+every restart.
+
+#### `500 — Composer detected issues in your platform: PHP >= 8.4.0`
+
+The web server's PHP-FPM is older than the PHP that ran `composer install`.
+The dependencies are locked against PHP 8.4, so the page dies before Laravel
+even boots - and because it dies that early, `storage/logs` stays empty.
+Point the site (or pool) at PHP 8.4: on a panel, change the domain's PHP
+version; on raw nginx, fix the `fastcgi_pass` socket.
+
+#### `fatal: detected dubious ownership in repository`
+
+If `update.sh` stops with:
+
+```
+fatal: detected dubious ownership in repository at '/var/www/pnlcs'
+```
+
+Git is refusing to run because the code directory is owned by a different user
+than the one running the update (a normal effect of the `pnlcs_app` volume).
+Mark the directory as trusted once — the exception is permanent, so later
+updates run cleanly:
+
+```bash
+docker exec pnlcs git config --global --add safe.directory /var/www/pnlcs
+docker exec pnlcs /usr/local/bin/update.sh
+```
+
+Already inside the container shell (`/var/www/pnlcs #`)? Run it without
+`docker exec`:
+
+```bash
+git config --global --add safe.directory /var/www/pnlcs
+/usr/local/bin/update.sh
+```
+
+> The update resets the working tree to `origin/main`, so any manual edits made
+> **inside** the container are discarded — all code is served from this
+> repository. Keep customisations in your own fork or theme, not in the running
+> container.
+
+### Self-hosted (without Docker)
+
+If you installed PNLCS directly on a server (see **Self-Hosted Installation**
+below), you update it **in place** — new code, migrations and rebuilt assets,
+your data untouched. Run every command from your PNLCS directory
+(`cd /path/to/pnlcs`).
+
+**1. Back up and pause the app (recommended on production).**
+```bash
+php artisan down            # shows a maintenance page to visitors
+mysqldump -u pnlcs -p pnlcs > backup-$(date +%F).sql   # database snapshot
+```
+
+**2. Pull the latest code from this repository.**
+```bash
+git pull origin main
+```
+
+**3. Update PHP dependencies.**
+```bash
+composer install --no-dev --optimize-autoloader
+```
+
+**4. Apply any new database migrations.**
+```bash
+php artisan migrate --force
+```
+
+**5. Rebuild the frontend assets.**
+```bash
+npm ci && npm run build
+```
+
+**6. Refresh the cached config, routes and views.**
+```bash
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+```
+
+**7. Reload PHP so the new code goes live.**
+```bash
+sudo systemctl reload php8.4-fpm    # or your process manager / FPM pool
+```
+
+**8. Bring the app back up.**
+```bash
+php artisan up
+```
+
+That's it — your installation now runs the latest code with all data intact.
+If you use a queue worker (step 13 of installation), restart it too:
+`php artisan queue:restart`.
+
+### Inside a hosting-panel account (Panelica, cPanel, …)
+
+The same in-place update, but with the account's own tools instead of root —
+no `sudo`, no `systemctl`. Run everything from the project directory with the
+panel's PHP binary (on Panelica that is `php84`):
+
+```bash
+cd ~/example.com/pnlcs
+php84 artisan down                                        # maintenance page
+git pull origin main
+php84 /usr/local/bin/composer install --no-dev --optimize-autoloader
+php84 artisan migrate --force                             # applies new migrations
+npm ci && npm run build                                   # the account's Node
+php84 artisan optimize                                    # rebuild cached config/routes/views
+php84 artisan up
+```
+
+There is no PHP-reload step you run yourself: FPM picks the new code up on the
+next request, or you restart PHP for the domain from the panel. If MySQL is on
+a socket, the `DB_SOCKET` line from installation stays in `.env` and needs
+nothing here. Your data, uploads and settings are untouched.
 
 ---
 
@@ -435,13 +805,14 @@ user=www-data
 
 Once the site loads and you can reach `/admin/login`, do these in order:
 
-### 1. Sign in and change the admin password
+### 1. Sign in
 
 - URL: `https://billing.your-domain.com/admin/login`
-- Username: **`admin`**
-- Password: **`admin123`**
-- Immediately open **My Account → Change Password** and set a strong password.
-- (Recommended) Enable **Two-Factor Authentication** from the same screen.
+- Use the administrator username and password you chose in the install
+  wizard. (Only a headless install that seeded by hand has the default
+  `admin` / `admin123` - if that is you, changing it is the first job.)
+- (Recommended) Enable **Two-Factor Authentication** under
+  **My Account → Security**.
 
 ### 2. Configure General Settings
 
@@ -557,9 +928,10 @@ Always back up your database before pulling new migrations.
 
 PNLCS ships with modular **server**, **gateway**, **registrar**, and **SSL
 provider** integrations under the `modules/` directory. Add control-panel
-servers (cPanel, Plesk, DirectAdmin, Proxmox, Panelica), configure
-payment gateways (Stripe, PayPal, bank transfer), and connect domain
-registrars (Enom) without touching core code.
+servers (cPanel, Plesk, DirectAdmin, Proxmox, HestiaCP, Vultr, Panelica),
+configure payment gateways (Stripe, PayPal, Authorize.Net, Razorpay, Mollie,
+Tpay, bank transfer), and connect domain registrars (Enom, Namecheap, ResellerClub)
+without touching core code.
 
 > 💡 **Choosing a panel to sell on?** The **[Panelica](https://panelica.com)**
 > server module is tested end-to-end and provisions instantly. Panelica is a
@@ -567,30 +939,65 @@ registrars (Enom) without touching core code.
 > CloudLinux) and universal migration from cPanel, Plesk, DirectAdmin, and
 > CyberPanel.
 
-| Module        | Type      | Status            |
-|---------------|-----------|-------------------|
-| Panelica      | Server    | ✅ Tested         |
-| cPanel        | Server    | ✅ Tested         |
-| Plesk         | Server    | ✅ Tested         |
-| DirectAdmin   | Server    | ⚠️ Needs testing  |
-| Proxmox       | Server    | ✅ Tested         |
-| Custom        | Server    | ⚠️ Needs testing  |
-| Stripe        | Gateway   | ✅ Tested         |
-| PayPal        | Gateway   | ⚠️ Needs testing  |
-| Authorize.Net | Gateway   | ⚠️ Needs testing  |
-| BankTransfer  | Gateway   | ⚠️ Needs testing  |
-| Enom          | Registrar | ⚠️ Needs testing  |
-| Manual        | Registrar | ✅ Works          |
-| GoGetSSL      | SSL       | ⚠️ Needs testing  |
-| Sectigo       | SSL       | ⚠️ Needs testing  |
-| Manual        | SSL       | ✅ Works          |
+This is every module in `modules/`, and whether the test suite exercises its
+own code. "Covered" means there are tests that drive the module and assert on
+what it sends and stores, with the provider's HTTP responses faked. It is not
+a statement that the integration has been run against a live provider account.
 
-If you run one of the "needs testing" integrations in production, please
-open an issue with what worked and what didn't. A short note is enough —
-we can iterate from there.
+| Module        | Type      | Automated tests |
+|---------------|-----------|-----------------|
+| Panelica      | Server    | Covered         |
+| cPanel        | Server    | Covered         |
+| Plesk         | Server    | Covered         |
+| DirectAdmin   | Server    | Covered         |
+| Proxmox       | Server    | Covered         |
+| HestiaCP      | Server    | Covered         |
+| Vultr         | Server    | Covered         |
+| Custom        | Server    | None yet        |
+| Stripe        | Gateway   | Covered         |
+| PayPal        | Gateway   | Covered         |
+| Authorize.Net | Gateway   | Covered         |
+| Razorpay      | Gateway   | Covered         |
+| Mollie        | Gateway   | Covered         |
+| Tpay          | Gateway   | None yet        |
+| BankTransfer  | Gateway   | Covered         |
+| Enom          | Registrar | Covered         |
+| Namecheap     | Registrar | Covered         |
+| ResellerClub  | Registrar | Covered         |
+| Manual        | Registrar | None yet        |
+| GoGetSSL      | SSL       | Covered         |
+
+If you run one of these against a real provider, please open an issue with
+what worked and what didn't — especially anything the faked responses could
+not have caught. A short note is enough; we can iterate from there.
 
 Adding a new module? Look at the existing ones as a reference; each module
 is a self-contained directory with a handler class and optional config view.
+
+---
+
+## AI Assistants — MCP Server
+
+PNLCS ships a first-party [Model Context Protocol](https://modelcontextprotocol.io)
+server, [`pnlcs-mcp` on npm](https://www.npmjs.com/package/pnlcs-mcp). Connect
+Claude Code, Claude Desktop, Cursor or VS Code to your install and ask it
+things in plain English — *which invoices are overdue*, *any orders held as
+fraud*, *open a ticket for this client*. Fifteen read tools are always
+available; the seven write tools exist only when you opt in with
+`PNLCS_ALLOW_WRITES=1`. Zero dependencies, nothing to install on the PNLCS
+side — it speaks to the same admin API your screens use, with an API
+credential you create under **Configuration → API Credentials**.
+
+Setup for every client lives in [`mcp/README.md`](mcp/README.md). Claude Code
+users need one command:
+
+```bash
+claude mcp add pnlcs \
+  --env PNLCS_URL=https://billing.example.com \
+  --env PNLCS_IDENTIFIER=your_identifier \
+  --env PNLCS_SECRET=your_secret \
+  -- npx -y pnlcs-mcp
+```
 
 ---
 
@@ -618,6 +1025,143 @@ the seeder or use the admin UI's export/import flow.
 
 Please report security issues privately to **security@panelica.com** rather
 than opening a public GitHub issue.
+
+---
+
+## Backups
+
+PNLCS backs up its database automatically. The scheduled task
+`pnlcs:db-backup` runs **daily at 04:30** (through the cron runner from
+installation step 13), dumps the database to a gzip file and rotates old ones.
+
+- **Where:** `storage/app/backups/db/pnlcs-YYYYMMDD-His.sql.gz`
+- **Retention:** the last **7** backups are kept (setting `db_backup_retention`)
+- **On/off:** controlled by the `db_backup_enabled` setting (on by default)
+
+**Run one by hand:**
+```bash
+php artisan pnlcs:db-backup                 # uses the defaults above
+php artisan pnlcs:db-backup --dir=/mnt/backups --retention=30
+php artisan pnlcs:db-backup --php           # pure-PHP dump if mysqldump is missing
+```
+
+It uses `mysqldump` when present and falls back to a PHP dump with `--php`.
+
+**Restore a backup:**
+```bash
+gunzip < storage/app/backups/db/pnlcs-20260101-043000.sql.gz | mysql -u pnlcs -p pnlcs
+```
+
+> The scheduled job covers the **database**. Uploaded files (ticket
+> attachments, invoice PDFs, branding) live under `storage/` — include that
+> directory in your server-level backup, and copy the `.sql.gz` files off the
+> box (or point `--dir` at mounted/off-site storage) so a lost disk is not a
+> lost backup.
+
+---
+
+## Payment Gateways
+
+Configure gateways under **Configuration → Gateways**. Open a gateway, fill in
+its keys, save, enable it, then **test with a small order before going live**.
+Checkout must run over **HTTPS**.
+
+| Gateway | What you enter |
+|---------|----------------|
+| **Stripe** | Publishable Key, Secret Key, Webhook Signing Secret |
+| **PayPal** | PayPal Email, Client ID, Client Secret, Sandbox on/off |
+| **Mollie** | Mollie API Key, Test Mode on/off |
+| **Razorpay** | Key ID, Key Secret |
+| **Authorize.Net** | API Login ID, Transaction Key |
+| **Tpay** (Poland) | Open API Client ID + Secret, security code |
+| **Bank Transfer** | Your bank/account details — shown to the client, confirmed by hand |
+
+### Webhooks
+
+Card gateways confirm a payment by calling back, so set the webhook URL in the
+provider's dashboard to:
+
+```
+https://your-domain.com/gateway/<gateway>/webhook
+```
+
+for example `…/gateway/stripe/webhook` or `…/gateway/paypal/webhook` (also
+`paypal`, `authorize`, `mollie`, `razorpay`, `tpay`). For Stripe, copy the
+signing secret the dashboard shows for that endpoint into the gateway's
+**Webhook Signing Secret** field — without it, incoming webhooks are rejected.
+Bank Transfer has no webhook; you mark those invoices paid yourself.
+
+---
+
+## Troubleshooting & FAQ
+
+### Common install & update errors
+
+**`500 — Composer detected issues in your platform: PHP >= 8.4.0`**
+The site's PHP-FPM is older than the PHP that ran `composer install`. Because
+the dependencies are locked against PHP 8.4 the page dies before Laravel even
+boots, so `storage/logs` stays empty. Point the site (or FPM pool) at **PHP
+8.4** — on a control panel, change the domain's PHP version; on raw nginx, fix
+the `fastcgi_pass` socket.
+
+**`Application encryption key has not been specified` / `MissingAppKeyException`**
+You skipped the key step. Run `php artisan key:generate` (it writes `APP_KEY`
+into `.env`), then reload.
+
+**`SQLSTATE… Base table or view not found`**
+Migrations have not run, or `.env` points at the wrong database. Check the
+`DB_*` values, make sure the database exists, then run
+`php artisan migrate --force`.
+
+**Composer stops with `… does not exist and could not be created` (writing to `vendor/`)**
+Something under `vendor/` is owned by another user (usually a past
+`sudo composer`), so the site user cannot write there. Fix ownership and retry:
+`chown -R <site-user>:<site-user> vendor && composer install --no-dev`.
+
+**`fatal: detected dubious ownership in repository`**
+Git refuses a repo owned by a different user. Mark it safe:
+`git config --global --add safe.directory /path/to/pnlcs`.
+
+**Blank or unstyled page, or the old UI after an update**
+The compiled assets or cached views are stale. Run `npm run build`, then
+`php artisan optimize` (or `php artisan view:clear`).
+
+**`.env` is reachable in the browser**
+The web root points at the project folder instead of `public/`. Point the
+document root at `pnlcs/public` — nothing above it should be web-served.
+
+**Invoices/emails never send, but nothing errors**
+`QUEUE_CONNECTION=database` is set without a running worker, so jobs pile up in
+the `jobs` table forever. Either keep `QUEUE_CONNECTION=sync` (the default), or
+run a worker (`php artisan queue:work`).
+
+**The `/install` wizard is already locked, or you never got to choose a password**
+You ran `php artisan db:seed` by hand before opening the wizard; seeing an
+administrator, it locks itself. Sign in with `admin` / `admin123` and change
+the password from your profile, or reinstall without seeding by hand.
+
+### Frequently asked
+
+**How do I offer a free (zero-cost) plan?**
+Create the product and set **Payment Type → Free** (the dropdown offers
+Recurring / One-time / Free). Do *not* put `0` in the price — that leaves the
+product with no sellable price.
+
+**How do I bring an existing customer/account into PNLCS?**
+Open the client → **Services** tab → **Add Service**. Leave the options empty
+for a billing-only record; use **"Link to an existing account"** to attach the
+account that already runs on the server (PNLCS then bills *and* manages it); or
+tick **"Create the account on the server now"** to provision a brand-new one.
+
+**How does PNLCS know which server account belongs to which service?**
+It stores the panel's internal **account ID** on the service (in `module_data`)
+and every action — suspend, terminate, password — uses that ID. It does *not*
+rely on usernames matching, so names can differ freely.
+
+**How do I update to the latest version?**
+Docker: `docker exec pnlcs /usr/local/bin/update.sh`. Self-hosted or inside a
+panel account: see [Updating](#updating). Your data is left untouched either
+way.
 
 ---
 

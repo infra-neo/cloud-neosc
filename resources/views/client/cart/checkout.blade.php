@@ -20,6 +20,7 @@
     @csrf
     <div class="pn-checkout-grid">
         <div>
+            @auth
             <div class="pn-card mb-16">
                 <div class="pn-card-header"><span class="pn-card-title">{{ __('client.checkout.contact_details') }}</span></div>
                 <div class="pn-card-body">
@@ -39,6 +40,50 @@
                     </div>
                 </div>
             </div>
+            @else
+            {{-- The visitor opens their account right here, mid-payment - not
+                 on a register page three screens back with the cart lost on
+                 the way. Same fields the register page asks for. --}}
+            <div class="pn-card mb-16">
+                <div class="pn-card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <span class="pn-card-title">{{ __('client.auth.create_your_account') }}</span>
+                    <span style="font-size:12.5px;color:var(--muted)">
+                        {{ __('client.auth.already_have_account') }}
+                        <a class="link" href="{{ route('client.login') }}">{{ __('client.auth.sign_in') }}</a>
+                    </span>
+                </div>
+                <div class="pn-card-body">
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label">{{ __('common.form.first_name') }}<span class="req">*</span></label>
+                            <input type="text" name="first_name" class="form-control" value="{{ old('first_name') }}" required>
+                            @error('first_name')<div class="text-danger text-sm">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ __('common.form.last_name') }}<span class="req">*</span></label>
+                            <input type="text" name="last_name" class="form-control" value="{{ old('last_name') }}" required>
+                            @error('last_name')<div class="text-danger text-sm">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">{{ __('common.form.email_address') }}<span class="req">*</span></label>
+                        <input type="email" name="email" class="form-control" value="{{ old('email') }}" required autocomplete="email">
+                        @error('email')<div class="text-danger text-sm">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label class="form-label">{{ __('common.form.password') }}<span class="req">*</span></label>
+                            <input type="password" name="password" class="form-control" required autocomplete="new-password">
+                            @error('password')<div class="text-danger text-sm">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">{{ __('common.form.password_confirm') }}<span class="req">*</span></label>
+                            <input type="password" name="password_confirmation" class="form-control" required autocomplete="new-password">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @endauth
 
             <div class="pn-card mb-16">
                 <div class="pn-card-header"><span class="pn-card-title">{{ __('client.checkout.payment_method') }}</span></div>
@@ -54,7 +99,7 @@
                 </div>
             </div>
 
-            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:14px;background:#f8fafc;border:1.5px solid var(--border);border-radius:var(--radius-sm)">
+            <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:14px;background:var(--bg);border:1.5px solid var(--border);border-radius:var(--radius-sm)">
                 <input type="checkbox" name="terms" id="terms" value="1" required style="margin-top:2px;flex-shrink:0;accent-color:var(--primary)">
                 <span style="font-size:13px;color:var(--muted)">
                     {{ __('client.auth.i_agree_to') }} <a href="#" class="link">{{ __('client.auth.terms_of_service') }}</a> {{ __('client.auth.and') }} <a href="#" class="link">{{ __('client.auth.privacy_policy') }}</a>.
@@ -69,28 +114,28 @@
                     @foreach($totals["items"] as $item)
                     <div class="pn-order-row">
                         <span class="key" style="font-size:13px">{{ $item["product_name"] ?? __('client.cart.product_fallback') }}</span>
-                        <span style="font-weight:600">${{ number_format($item["price"] ?? 0, 2) }}</span>
+                        <span style="font-weight:600">{{ money_fmt($item["price"] ?? 0) }}</span>
                     </div>
                     @endforeach
                     @if(($totals["discount"] ?? 0) > 0)
                     <div class="pn-order-row" style="color:var(--success)">
-                        <span>{{ __('client.cart.discount') }}</span><span>-${{ number_format($totals["discount"], 2) }}</span>
+                        <span>{{ __('client.cart.discount') }}</span><span>-{{ money_fmt($totals["discount"]) }}</span>
                     </div>
                     @endif
                     @if(($totals["tax"] ?? 0) > 0)
                     <div class="pn-order-row">
-                        <span class="key">{{ __('client.cart.tax') }}</span><span>${{ number_format($totals["tax"], 2) }}</span>
+                        <span class="key">{{ __('client.cart.tax') }}</span><span>{{ money_fmt($totals["tax"]) }}</span>
                     </div>
                     @endif
                     <div class="pn-order-row">
                         <span>{{ __('client.cart.total') }}</span>
-                        <span style="color:var(--primary);font-size:18px">${{ number_format($totals["total"], 2) }}</span>
+                        <span style="color:var(--primary);font-size:18px">{{ money_fmt($totals["total"]) }}</span>
                     </div>
                     <button type="submit" class="btn btn-accent" style="width:100%;justify-content:center;margin-top:20px;font-size:15px;padding:12px">
                         {{ __('client.checkout.place_order') }} &rarr;
                     </button>
                     <p class="text-muted text-sm" style="text-align:center;margin-top:10px">
-                        {{ __('client.checkout.secure_checkout') }} &mdash; ${{ number_format($totals["total"], 2) }}
+                        {{ __('client.checkout.secure_checkout') }} &mdash; {{ money_fmt($totals["total"]) }}
                     </p>
                 </div>
             </div>

@@ -24,16 +24,25 @@
                 <a href="/client/store" class="hosting-plans__promo-btn">{{ $promoCta }} <i class="ri-arrow-right-line"></i></a>
             </div>
             {{-- Plan cards --}}
-            @foreach($hostingProducts->take(3) as $idx => $product)
+            {{-- values() so $idx is 0,1,2: the collection keeps its original keys after
+                 filtering, which put the "most popular" badge on whichever plan
+                 happened to be second in the unfiltered list. --}}
+            @foreach($hostingProducts->take(3)->values() as $idx => $product)
             @php
                 $priced = $product->pricedCycles($currency?->id ?? null);
                 $priceCycle = isset($priced['monthly']) ? 'monthly' : (string) array_key_first($priced);
                 $monthlyPrice = $priced[$priceCycle] ?? null;
                 $annualPrice = $priced['annually'] ?? null;
                 $configOptions = is_string($product->config_options) ? json_decode($product->config_options, true) : ($product->config_options ?? []);
+                // Hand-written feature lines win when an operator has set them;
+                // otherwise the card states the plan's real limits, which cannot
+                // drift from what the panel enforces the way typed copy does.
                 $features = [];
                 for ($i = 1; $i <= 7; $i++) {
                     if (!empty($configOptions["f{$i}"])) $features[] = $configOptions["f{$i}"];
+                }
+                if (! $features) {
+                    $features = array_map(fn ($r) => $r['text'], $product->resourceSummary());
                 }
                 $isPopular = $idx === 1;
             @endphp

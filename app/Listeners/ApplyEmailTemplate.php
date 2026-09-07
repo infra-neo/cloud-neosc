@@ -22,6 +22,25 @@ class ApplyEmailTemplate
     /** Mailables that must never be copied to a second address. */
     private const NEVER_COPIED = [
         'PasswordResetMail',
+        // Carries an app's generated passwords in the clear, on the account
+        // owner's own request - for their eyes only.
+        'ContainerAccessDetailsMail',
+    ];
+
+    /**
+     * r137-never-off: mailables a template switch must not be able to stop.
+     *
+     * The reset link is the only way back into an account. The two password
+     * templates are also named the wrong way round - the one called "Password
+     * Reset Confirmation" carries the link, while "Password Reset Validation"
+     * holds the after-the-fact note that nothing sends - so an operator
+     * switching off what sounds like a courtesy email switched off the way
+     * customers recover their accounts, and nothing said why.
+     *
+     * The rest of the template still applies: subject, from address, body.
+     */
+    private const NEVER_SUPPRESSED = [
+        'PasswordResetMail',
     ];
 
     public function __construct(private EmailTemplateService $templates) {}
@@ -35,25 +54,54 @@ class ApplyEmailTemplate
             return null;
         }
 
-        $template = $this->templates->forMailable($mailable);
+        $client = $this->templates->clientFrom($event->data);
+        $locale = $client->language ?? null;
+
+        // The email is written in the recipient's language, so render its
+        // subject/body (and any __() inside) in that locale, not the locale of
+        // whichever request happened to trigger the send.
+        if ($locale && $locale !== '' && $locale !== app()->getLocale()) {
+            app()->setLocale($locale);
+        }
+
+        $template = $this->templates->forMailable($mailable, $locale);
 
         if (! $template) {
             return null;
         }
 
         if ($template->disabled) {
-            Log::info('Outgoing mail suppressed: the template is switched off.', [
-                'template' => $template->name,
-                'subject' => $event->message->getSubject(),
-            ]);
+            if (in_array(class_basename($mailable), self::NEVER_SUPPRESSED, true)) {
+                Log::warning('A switched-off template cannot stop this email; it is the only way back into an account.', [
+                    'template' => $template->name,
+                    'mailable' => class_basename($mailable),
+                ]);
+            } else {
+                Log::info('Outgoing mail suppressed: the template is switched off.', [
+                    'template' => $template->name,
+                    'subject' => $event->message->getSubject(),
+                ]);
 
-            return false;
+                return false;
+            }
         }
 
         $vars = $this->templates->varsFor($event->data);
 
         if (filled($template->subject)) {
-            $event->message->subject($this->templates->merge($template->subject, $vars));
+            $subject = $this->templates->merge($template->subject, $vars);
+
+            // A merge field this email carries nothing for would go out with
+            // the braces showing. The mailable's own subject is a complete
+            // sentence, so keep that instead and say why in the log.
+            if (preg_match('/\{[A-Za-z_][A-Za-z0-9_]*\}/', $subject, $unresolved)) {
+                Log::warning('Template subject left as the mailable wrote it: this email carries nothing for that merge field.', [
+                    'template' => $template->name,
+                    'field' => $unresolved[0],
+                ]);
+            } else {
+                $event->message->subject($subject);
+            }
         }
 
         if (filled($template->from_email)) {
@@ -83,7 +131,28 @@ class ApplyEmailTemplate
         if ($template->custom && filled($template->message)) {
             $body = $this->templates->merge((string) $template->message, $vars);
 
-            $event->message->html(nl2br(e($body), false));
+            // The same question the subject is asked twenty lines up. A body
+            // still holding a merge field would go out with the braces showing,
+            // so keep the one the mailable built and say which field was empty.
+            if (preg_match('/\{[A-Za-z_][A-Za-z0-9_]*\}/', $body, $unfed)) {
+                Log::warning('Template body left as the mailable wrote it: this email carries nothing for that merge field.', [
+                    'template' => $template->name,
+                    'field' => $unfed[0],
+                ]);
+
+                return null;
+            }
+
+            // A template marked plaintext goes out as text only. The column has
+            // been on the table all along and nothing read it, so the setting
+            // meant nothing and the mail went out as HTML regardless; the html
+            // part the mailable built has to be cleared, not just skipped.
+            if ($template->plaintext) {
+                $event->message->html(null);
+            } else {
+                $event->message->html(nl2br(e($body), false));
+            }
+
             $event->message->text($body);
         }
 
@@ -103,7 +172,15 @@ class ApplyEmailTemplate
             return [];
         }
 
-        $already = array_map('strtolower', array_keys($event->message->getTo() ?? []));
+        // r124-already: the addresses, not the positions. This read the keys of
+        // the recipient list, which are 0, 1, 2 - so nobody was ever recognised
+        // as being on the message already, and a customer who had added their
+        // own address as a billing contact received every invoice twice: once
+        // to them, once copied to them.
+        $already = array_map(
+            fn ($address) => strtolower($address->getAddress()),
+            array_merge($event->message->getTo() ?: [], $event->message->getCc() ?: [])
+        );
         $addresses = [];
 
         try {

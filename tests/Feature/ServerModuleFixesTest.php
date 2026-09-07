@@ -112,10 +112,10 @@ test('plesk suspend and unsuspend use the dedicated endpoints', function () {
     $module = new \Modules\Servers\Plesk\PleskModule();
 
     expect($module->suspend($service->fresh(['server']), 'nonpayment')['success'])->toBeTrue();
-    Http::assertSent(fn ($r) => str_ends_with($r->url(), '/clients/42/suspend') && $r->method() === 'POST');
+    Http::assertSent(fn ($r) => str_ends_with($r->url(), '/clients/42/suspend') && $r->method() === 'PUT');
 
     expect($module->unsuspend($service->fresh(['server']))['success'])->toBeTrue();
-    Http::assertSent(fn ($r) => str_ends_with($r->url(), '/clients/42/activate') && $r->method() === 'POST');
+    Http::assertSent(fn ($r) => str_ends_with($r->url(), '/clients/42/activate') && $r->method() === 'PUT');
 });
 
 test('plesk usage pulls client statistics and updates the service', function () {
@@ -229,7 +229,9 @@ test('vultr usage lists all instances without the broken tag filter and updates 
     $fresh = $service->fresh();
     expect($totals['updated'])->toBe(1)
         ->and($fresh->disk_limit)->toBe(25 * 1024)
-        ->and(json_decode($fresh->notes, true)['vultr_main_ip'])->toBe('203.0.113.5');
+        // Module data lives in module_data; a legacy row that still held it in
+        // notes is read once and then left in the column it belongs in.
+        ->and($fresh->module_data['vultr_main_ip'])->toBe('203.0.113.5');
 });
 
 // ---------------------------------------------------------------------------

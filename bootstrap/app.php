@@ -30,13 +30,18 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Confía en las cabeceras X-Forwarded-* enviadas por el reverse proxy (NetBird/Cloudflare)
+        // Exclusión de encriptación para cookie de tema oscuro
+        $middleware->encryptCookies(except: ['pnlcs_theme']);
+
+        // Confía en las cabeceras X-Forwarded-* enviadas por el reverse proxy (NetBird/Cloudflare/Docker)
         $middleware->trustProxies(at: '*');
 
         $middleware->prependToGroup('web', RedirectToInstaller::class);
         $middleware->appendToGroup('web', AffiliateTracking::class);
         $middleware->appendToGroup('web', SetLocale::class);
         $middleware->appendToGroup('web', MaintenanceMode::class);
+
+        $middleware->throttleApi('api');
         $middleware->appendToGroup('api', ApiKeyAuth::class);
         $middleware->alias([
             'banned.ip' => BlockBannedIp::class,
@@ -52,19 +57,15 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withEvents(false)
     ->withExceptions(function (Exceptions $exceptions): void {
-        // Model binding failure (ör. /admin/clients/999 — client yok)
-        // → İlgili listeleme sayfasına flash mesajla döndür, generic 404 yerine
         $exceptions->render(function (NotFoundHttpException $e, $request) {
-            // Only intercept when the 404 is caused by route model binding (ModelNotFoundException)
             $previous = $e->getPrevious();
             if (! $previous instanceof ModelNotFoundException) {
-                return null; // leave generic 404 for real missing pages
+                return null;
             }
-            $e = $previous; // work with the original
+            $e = $previous;
             $model = class_basename($e->getModel());
             $message = __('admin.errors.record_not_found', ['model' => $model]);
 
-            // Admin alanı — adminin oturumu açık, admin paneline döndür
             if ($request->is('admin/*')) {
                 $segments = explode('/', trim($request->path(), '/'));
                 $section = $segments[1] ?? null;
@@ -78,7 +79,6 @@ return Application::configure(basePath: dirname(__DIR__))
                 return redirect($target)->with('error', $message);
             }
 
-            // Client alanı — müşteri paneline döndür
             if ($request->is('client/*')) {
                 $segments = explode('/', trim($request->path(), '/'));
                 $section = $segments[1] ?? null;
@@ -92,7 +92,6 @@ return Application::configure(basePath: dirname(__DIR__))
                 return redirect($target)->with('error', $message);
             }
 
-            // Public / diğer — normal 404 akışına bırak
             return null;
         });
     })->create();

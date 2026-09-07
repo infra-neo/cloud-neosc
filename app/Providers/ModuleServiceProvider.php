@@ -54,15 +54,20 @@ class ModuleServiceProvider extends ServiceProvider
             $registry->registerRegistrar("namecheap", \Modules\Registrars\Namecheap\NamecheapRegistrar::class);
             // ResellerClub / LogicBoxes Registrar
             $registry->registerRegistrar("resellerclub", \Modules\Registrars\ResellerClub\ResellerClubRegistrar::class);
+            $registry->registerRegistrar("openprovider", \Modules\Registrars\OpenProvider\OpenProviderRegistrar::class);
             // eNom Registrar
             $registry->registerRegistrar("enom", \Modules\Registrars\Enom\EnomRegistrar::class);
             // Manual Registrar
             $registry->registerRegistrar("manual", \Modules\Registrars\Manual\ManualRegistrar::class);
+            // HRD Registrar (hrd.pl)
+            $registry->registerRegistrar("hrd", \Modules\Registrars\HRD\HrdRegistrar::class);
 
             // Mollie (EU)
             $registry->registerGateway("mollie", \Modules\Gateways\Mollie\MollieModule::class);
             // Razorpay (India/Asia)
             $registry->registerGateway("razorpay", \Modules\Gateways\Razorpay\RazorpayModule::class);
+            // Tpay (Poland)
+            $registry->registerGateway("tpay", \Modules\Gateways\Tpay\TpayModule::class);
 
             // SSL Modules
             $registry->registerSsl('gogetssl', \Modules\Ssl\GoGetSSL\GoGetSslModule::class);

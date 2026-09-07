@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Order;
+use App\Mail\Concerns\LocalizesToRecipient;
 use App\Models\Setting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -14,10 +15,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class OrderConfirmationMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public Order $order
-    ) {}
+    ) {
+        $this->localizeTo($this->order);
+    }
 
     public function envelope(): Envelope
     {
@@ -32,7 +36,7 @@ class OrderConfirmationMail extends Mailable implements ShouldQueue
             view: 'emails.order-confirmation',
             with: [
                 'order' => $this->order,
-                'companyName' => Setting::get('CompanyName', 'PNLCS'),
+                'companyName' => company_name(),
             ],
         );
     }

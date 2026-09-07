@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Enums\InvoiceStatus;
+use App\Models\BillableItem;
 use App\Models\Client;
 use App\Models\Domain;
 use App\Models\Invoice;
@@ -38,12 +40,21 @@ class InvoiceGenerationService
             // The customer turned renewal off; billing them anyway is what got
             // the account suspended for an invoice they never wanted.
             ->where('auto_renew', true)
+            // A cancellation says the same thing more plainly. One asked for
+            // the end of the billing period leaves the service running until
+            // its due date, and renewals are raised a fortnight before that -
+            // so the invoice for the period they cancelled arrived anyway, and
+            // not paying it walked the account through overdue marking, late
+            // fees and the suspension chain before the cancellation job ended
+            // the service. A request that has been dealt with is closed, and
+            // billing resumes on its own if the service is put back to work.
+            ->whereDoesntHave('cancellationRequest', fn ($c) => $c->whereNull('processed_at'))
             ->whereNotNull('next_due_date')
             ->where('next_due_date', '<=', $cutoff)
             ->where('amount', '>', 0)
             ->whereHas('client')
             ->whereDoesntHave('client.invoices', fn ($q) => $q
-                ->whereNotIn('status', \App\Enums\InvoiceStatus::settled())
+                ->whereNotIn('status', InvoiceStatus::settled())
                 ->whereHas('items', fn ($i) => $i->where('type', 'Hosting')->whereColumn('rel_id', 'services.id')))
             ->get();
 
@@ -65,27 +76,61 @@ class InvoiceGenerationService
             ->where('recurring_amount', '>', 0)
             ->whereHas('client')
             ->whereDoesntHave('client.invoices', fn ($q) => $q
-                ->whereNotIn('status', \App\Enums\InvoiceStatus::settled())
+                ->whereNotIn('status', InvoiceStatus::settled())
+                ->whereHas('items', fn ($i) => $i->where('type', 'Domain')->whereColumn('rel_id', 'domains.id')))
+            // r122-rebill: this period is already paid for. A renewal the
+            // registrar refused leaves the dates where they were - which is
+            // honest, the domain really has not been renewed - so the domain
+            // stays due and would be billed again tomorrow for the year the
+            // customer has already paid for. Somebody has to renew it by hand;
+            // charging twice is not the answer.
+            ->whereDoesntHave('client.invoices', fn ($q) => $q
+                ->where('status', InvoiceStatus::Paid->value)
+                ->whereRaw('invoices.date >= DATE_SUB(domains.next_due_date, INTERVAL ? DAY)', [$daysAhead])
                 ->whereHas('items', fn ($i) => $i->where('type', 'Domain')->whereColumn('rel_id', 'domains.id')))
             ->get();
+
+        // One-off charges an operator has added to an account. They have their
+        // own due date and, until now, no way of reaching an invoice at all.
+        $charges = BillableItem::with('client')
+            ->whereNull('invoice_id')
+            ->where(fn ($q) => $q->whereNull('due_date')->orWhere('due_date', '<=', $cutoff))
+            ->whereHas('client')
+            ->get();
+
+        // Recurring ones are a feature nobody has built: billing them once and
+        // marking them done would be wrong, so they are left alone and said
+        // out loud rather than dropped in silence.
+        [$recurring, $charges] = $charges->partition(fn ($c) => (bool) $c->recur);
+
+        if ($recurring->isNotEmpty()) {
+            Log::warning('InvoiceGenerationService: recurring billable items are not billed', [
+                'count' => $recurring->count(),
+                'ids' => $recurring->pluck('id')->all(),
+            ]);
+        }
 
         $grouped = $services->groupBy('client_id');
         $groupedAddons = $addons->groupBy('client_id');
         $groupedDomains = $domains->groupBy('client_id');
+        $groupedCharges = $charges->groupBy('client_id');
         $summary = ['generated' => 0, 'skipped' => 0, 'errors' => 0, 'invoice_ids' => []];
 
         $clientIds = $grouped->keys()
             ->merge($groupedAddons->keys())
             ->merge($groupedDomains->keys())
+            ->merge($groupedCharges->keys())
             ->unique();
 
         foreach ($clientIds as $clientId) {
             $clientServices = $grouped->get($clientId, collect());
             $clientAddons = $groupedAddons->get($clientId, collect());
             $clientDomains = $groupedDomains->get($clientId, collect());
+            $clientCharges = $groupedCharges->get($clientId, collect());
             $client = $clientServices->first()?->client
                 ?? $clientAddons->first()?->client
-                ?? $clientDomains->first()?->client;
+                ?? $clientDomains->first()?->client
+                ?? $clientCharges->first()?->client;
 
             if (! $client) {
                 $summary['skipped']++;
@@ -98,7 +143,8 @@ class InvoiceGenerationService
                     $client,
                     $clientServices->all(),
                     $clientAddons->all(),
-                    $clientDomains->all()
+                    $clientDomains->all(),
+                    $clientCharges->all()
                 );
 
                 if ($invoice) {
@@ -143,27 +189,168 @@ class InvoiceGenerationService
      *
      * @return bool True if promotion was applied successfully.
      */
-    public function applyPromotion(Invoice $invoice, string $promoCode): bool
+    /**
+     * The products an invoice is for, so a promotion limited to some of them
+     * can tell whether this is one.
+     *
+     * @return array<int, int>
+     */
+    /**
+     * The part of the invoice a promotion may discount: the whole subtotal
+     * for an unrestricted code, only the lines whose product the code covers
+     * for a restricted one.
+     */
+    private function coveredAmount(Invoice $invoice, Promotion $promo): float
+    {
+        $covered = $promo->coveredProductIds();
+
+        if ($covered === []) {
+            return (float) $invoice->subtotal;
+        }
+
+        $serviceItems = $invoice->items->whereIn('type', ['Hosting', 'Service', 'hosting', 'service']);
+
+        $productByService = Service::whereIn('id', $serviceItems->pluck('rel_id')->filter())
+            ->pluck('product_id', 'id');
+
+        return (float) $serviceItems
+            ->filter(fn ($item) => in_array((int) ($productByService[$item->rel_id] ?? 0), $covered, true))
+            ->sum('amount');
+    }
+
+    private function invoiceProductIds(Invoice $invoice): array
+    {
+        $serviceIds = $invoice->items
+            ->whereIn('type', ['Hosting', 'Service', 'hosting', 'service'])
+            ->pluck('rel_id')
+            ->filter()
+            ->all();
+
+        if ($serviceIds === []) {
+            return [];
+        }
+
+        return Service::whereIn('id', $serviceIds)
+            ->pluck('product_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * The recurring promotion a renewal should carry, if any.
+     *
+     * The code lives on the order the service was sold under. It is only
+     * carried forward while the promotion says it recurs and while it still
+     * has cycles left - counted from the renewals that already carried it,
+     * which applyPromotion records in the invoice notes.
+     *
+     * @param  array<int, Service>  $services
+     */
+    private function recurringPromoFor(array $services): ?string
+    {
+        foreach ($services as $service) {
+            $service->loadMissing('order');
+
+            $code = trim((string) ($service->order->promo_code ?? ''));
+
+            if ($code === '') {
+                continue;
+            }
+
+            $promo = Promotion::whereRaw('LOWER(code) = ?', [strtolower($code)])->first();
+
+            if (! $promo || ! $promo->recurring) {
+                continue;
+            }
+
+            $cycles = (int) ($promo->cycles ?? 0);
+
+            if ($cycles > 0 && $this->timesPromoApplied($service, $code) >= $cycles) {
+                continue;
+            }
+
+            return $promo->code;
+        }
+
+        return null;
+    }
+
+    /**
+     * How many invoices for this service already carried the promotion.
+     */
+    private function timesPromoApplied(Service $service, string $code): int
+    {
+        return Invoice::whereHas('items', fn ($q) => $q
+            ->where('type', 'Hosting')
+            ->where('rel_id', $service->id))
+            ->where('notes', 'like', '%Promo applied: '.$code.'%')
+            ->count();
+    }
+
+    /**
+     * @param  bool  $continuation  A renewal carrying a recurring code the
+     *                              customer already claimed, rather than a
+     *                              fresh claim of it.
+     */
+    public function applyPromotion(Invoice $invoice, string $promoCode, bool $continuation = false): bool
     {
         $promo = Promotion::where('code', $promoCode)->first();
 
-        if (! $promo || ! $promo->isValid()) {
+        if (! $promo) {
             return false;
         }
 
-        $invoice->loadMissing('items');
+        $invoice->loadMissing('items', 'client');
 
-        return DB::transaction(function () use ($invoice, $promo) {
+        $productIds = $this->invoiceProductIds($invoice);
+
+        if ($continuation) {
+            // The rules above are about claiming a code: the quota, the dates
+            // it can be claimed between, one per customer, new customers only.
+            // A renewal is not a claim - it is the promise already made being
+            // kept - and how long that promise lasts is what `cycles` says,
+            // counted per service by the caller. Asking the claiming questions
+            // again meant a customer sold "20% off, recurring for three
+            // cycles" lost it at the first renewal as soon as the code had a
+            // quota, which is the very thing recurring promotions exist to
+            // stop. What still applies is the products the code covers.
+            $covered = $promo->coveredProductIds();
+
+            if ($covered !== [] && array_intersect($covered, array_map('intval', $productIds)) === []) {
+                return false;
+            }
+        } elseif (! $promo->isValidFor($invoice->client, $productIds)) {
+            // The rules that go with the code - one per customer, new customers
+            // only, existing customers only, particular products - were checked
+            // in the cart and nowhere else. The order endpoint hands a code
+            // straight to this method, so a once-per-customer code could be
+            // spent again and again by the same customer.
+            return false;
+        }
+
+        return DB::transaction(function () use ($invoice, $promo, $continuation) {
             $subtotal = (float) $invoice->subtotal;
 
             if ($subtotal <= 0) {
                 return false;
             }
 
+            // The base the discount is computed on. applies_to used to be a
+            // door only: once any covered product was on the invoice, the
+            // percentage was taken off the WHOLE subtotal - a "50% off
+            // product A" code on a mixed invoice discounted everything else
+            // in the cart too.
+            $base = min($this->coveredAmount($invoice, $promo), $subtotal);
+
+            if ($base <= 0) {
+                return false;
+            }
+
             // Calculate discount amount
             $discount = match ($promo->type) {
-                'percentage' => round($subtotal * ($promo->value / 100), 2),
-                'fixed' => min((float) $promo->value, $subtotal),
+                'percentage' => round($base * ($promo->value / 100), 2),
+                'fixed' => min((float) $promo->value, $base),
                 default => 0.0,
             };
 
@@ -171,30 +358,38 @@ class InvoiceGenerationService
                 return false;
             }
 
-            // Apply as credit on the invoice. The discount comes off the
-            // taxable amount as well: taxing the full price and then knocking
-            // the discount off the total charges tax on money the customer
-            // never pays, and it disagreed with the figure the cart quoted.
-            $newCredit = (float) $invoice->credit + $discount;
+            // r121-discount: a line of its own, the way the group discount is
+            // done. It used to go into the invoice's credit column, which is
+            // where account balance the customer actually paid in lives - two
+            // different things in one field. Cancelling an invoice hands the
+            // balance back and could not tell them apart, so a cancelled order
+            // handed the customer the discount as real money. It also read as
+            // "Credit applied" on the invoice rather than as the code they used.
+            //
+            // Taxed where the work is taxed, so the taxable amount falls by the
+            // discount: taxing the full price and taking the discount off the
+            // total charges tax on money the customer never pays.
+            $hasTaxable = (float) $invoice->items->where('taxed', true)->sum('amount') > 0;
 
-            $taxable = max(0, (float) $invoice->items->where('taxed', true)->sum('amount') - $discount);
-            $taxRate = (float) $invoice->tax_rate;
-            $taxRate2 = (float) $invoice->tax_rate2;
-            $newTax = $taxRate > 0 ? round($taxable * ($taxRate / 100), 2) : 0.0;
-            $newTax2 = $taxRate2 > 0 ? round($taxable * ($taxRate2 / 100), 2) : 0.0;
-
-            $newTotal = max(0, $subtotal + $newTax + $newTax2 - $newCredit);
-
-            $invoice->update([
-                'credit' => $newCredit,
-                'tax' => $newTax,
-                'tax2' => $newTax2,
-                'total' => $newTotal,
-                'notes' => trim(($invoice->notes ?? '')."\nPromo applied: {$promo->code} (-\${$discount})"),
+            $this->invoiceService->addLineItem($invoice, [
+                'type' => 'Discount',
+                'rel_id' => 0,
+                'description' => "Promo code {$promo->code}",
+                'amount' => -$discount,
+                'taxed' => $hasTaxable,
             ]);
 
-            // Increment promo usage counter
-            $promo->increment('uses');
+            $invoice->update([
+                'notes' => trim(($invoice->notes ?? '')."\nPromo applied: {$promo->code} (-".money_fmt($discount).')'),
+            ]);
+
+            // The sign-up counter, measured against max_uses. A renewal spends
+            // no sign-up: it is the same claim being honoured again, and
+            // counting it burned the quota an operator set aside for new
+            // customers.
+            if (! $continuation) {
+                $promo->increment('uses');
+            }
 
             return true;
         });
@@ -222,9 +417,12 @@ class InvoiceGenerationService
      *
      * @param  Service[]  $services
      */
-    private function generateForServices(Client $client, array $services, array $addons = [], array $domains = []): ?Invoice
+    /**
+     * @param  array<int, BillableItem>  $charges
+     */
+    private function generateForServices(Client $client, array $services, array $addons = [], array $domains = [], array $charges = []): ?Invoice
     {
-        if (empty($services) && empty($addons) && empty($domains)) {
+        if (empty($services) && empty($addons) && empty($domains) && empty($charges)) {
             return null;
         }
 
@@ -238,10 +436,16 @@ class InvoiceGenerationService
                 ? $service->next_due_date
                 : Carbon::parse($service->next_due_date);
 
+            // The period the invoice covers runs from one day after the last
+            // billing date up to the next due date, so the customer can see
+            // exactly what they are paying for (2026/08/15 - 2026/09/15).
+            $periodStart = $dueDate->copy()->subMonths(Service::monthsInCycle($billingCycle));
+            $period = $periodStart->format('Y/m/d').' - '.$dueDate->format('Y/m/d');
+
             $items[] = [
                 'type' => 'Hosting',
                 'rel_id' => $service->id,
-                'description' => "{$productName} ({$billingCycle}) — {$service->domain} — Due: {$dueDate->format(date_fmt())}",
+                'description' => "{$productName} ({$billingCycle}) — {$service->domain} — {$period}",
                 'amount' => (float) $service->amount,
                 'taxed' => $service->product->tax ?? true,
                 'due_date' => $dueDate->toDateString(),
@@ -260,6 +464,16 @@ class InvoiceGenerationService
             $items[] = $addonService->lineItem($addon);
         }
 
+        foreach ($charges as $charge) {
+            $items[] = [
+                'type' => 'BillableItem',
+                'rel_id' => $charge->id,
+                'description' => $charge->description,
+                'amount' => (float) $charge->amount,
+                'taxed' => true,
+            ];
+        }
+
         foreach ($domains as $domain) {
             $items[] = [
                 'type' => 'Domain',
@@ -272,11 +486,31 @@ class InvoiceGenerationService
         }
 
         $options = [
-            'due_date' => now()->addDays((int) config('billing.invoice_due_days', 14))->toDateString(),
+            'due_date' => now()->addDays((int) \App\Models\Setting::get('InvoiceDueDays', 14))->toDateString(),
             'notes' => 'Auto-generated renewal invoice.',
         ];
 
-        return $this->invoiceService->createInvoice($client, $items, $options);
+        $invoice = $this->invoiceService->createInvoice($client, $items, $options);
+
+        // A promotion the operator marked as recurring keeps its promise. The
+        // switch and the number of cycles have always been saved and never
+        // read, so a customer sold "20% off, recurring for three cycles" got it
+        // once and paid full price at every renewal after that.
+        $recurringPromo = $this->recurringPromoFor($services);
+
+        if ($recurringPromo !== null) {
+            $this->applyPromotion($invoice->fresh(), $recurringPromo, continuation: true);
+            $invoice = $invoice->fresh();
+        }
+
+        // Which invoice each one-off charge went on. Without this the same
+        // charge would be added to every invoice the client is ever sent.
+        if ($charges !== []) {
+            BillableItem::whereIn('id', array_map(fn ($c) => $c->id, $charges))
+                ->update(['invoice_id' => $invoice->id]);
+        }
+
+        return $invoice;
     }
 
     /**
@@ -285,6 +519,33 @@ class InvoiceGenerationService
      *
      * @return array Line items for overage charges
      */
+    /**
+     * The allowance to bill against, in megabytes.
+     *
+     * What the panel reported, and failing that what the product was sold
+     * with. Only the cPanel module records both figures; Panelica records the
+     * disk quota alone and Plesk neither, so without this an overage line
+     * could never be raised on those panels however much was used.
+     */
+    private function limitFor(Service $service, string $kind): int
+    {
+        $recorded = (int) ($kind === 'disk' ? $service->disk_limit : $service->bw_limit);
+
+        if ($recorded > 0) {
+            return $recorded;
+        }
+
+        $config = is_string($service->product?->config_options)
+            ? json_decode($service->product->config_options, true)
+            : ($service->product?->config_options ?? []);
+
+        if (! is_array($config)) {
+            return 0;
+        }
+
+        return (int) ($config[$kind === 'disk' ? 'res_disk_mb' : 'res_bandwidth_mb'] ?? 0);
+    }
+
     public function calculateOverageItems(Service $service): array
     {
         $product = $service->product;
@@ -296,7 +557,7 @@ class InvoiceGenerationService
 
         // Disk overage
         $diskUsage = (int) ($service->disk_usage ?? 0);
-        $diskLimit = (int) ($service->disk_limit ?? 0);
+        $diskLimit = $this->limitFor($service, 'disk');
         $diskRate = (float) ($product->overage_disk_rate ?? 0);
 
         if ($diskLimit > 0 && $diskUsage > $diskLimit && $diskRate > 0) {
@@ -307,7 +568,7 @@ class InvoiceGenerationService
                 $items[] = [
                     'type' => 'Overage',
                     'rel_id' => $service->id,
-                    'description' => "Disk Overage: {$overageMb} MB over {$diskLimit} MB limit @ \${$diskRate}/MB — {$service->domain}",
+                    'description' => "Disk Overage: {$overageMb} MB over {$diskLimit} MB limit @ ".currency_symbol()."{$diskRate}/MB — {$service->domain}",
                     'amount' => $amount,
                     'taxed' => $product->tax ?? true,
                 ];
@@ -316,7 +577,7 @@ class InvoiceGenerationService
 
         // Bandwidth overage
         $bwUsage = (int) ($service->bw_usage ?? 0);
-        $bwLimit = (int) ($service->bw_limit ?? 0);
+        $bwLimit = $this->limitFor($service, 'bw');
         $bwRate = (float) ($product->overage_bw_rate ?? 0);
 
         if ($bwLimit > 0 && $bwUsage > $bwLimit && $bwRate > 0) {
@@ -327,7 +588,7 @@ class InvoiceGenerationService
                 $items[] = [
                     'type' => 'Overage',
                     'rel_id' => $service->id,
-                    'description' => "Bandwidth Overage: {$overageMb} MB over {$bwLimit} MB limit @ \${$bwRate}/MB — {$service->domain}",
+                    'description' => "Bandwidth Overage: {$overageMb} MB over {$bwLimit} MB limit @ ".currency_symbol()."{$bwRate}/MB — {$service->domain}",
                     'amount' => $amount,
                     'taxed' => $product->tax ?? true,
                 ];

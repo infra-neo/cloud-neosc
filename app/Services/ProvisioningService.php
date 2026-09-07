@@ -226,18 +226,82 @@ class ProvisioningService
      * Queue a failed module action for automatic retry (see pnlcs:module-queue).
      * Deduplicates on (service, action, pending) and notifies admins once.
      */
+    /**
+     * Whether a refusal is one no amount of trying will get past.
+     *
+     * A server that did not answer may answer later. A service the panel has
+     * no account for will not grow one because the queue asks again: those
+     * refusals are about the record, not the connection, and repeating them
+     * only fills the log - four services on this installation produced the
+     * same line every half hour for a fortnight.
+     */
+    /**
+     * Whether the queue has already given up on this work for good.
+     *
+     * A failed entry whose reason cannot change - no account to act on, no
+     * module configured - is the queue's answer, and running the job again
+     * does not make it a different one. A failure that could come right is not
+     * counted here, so it keeps being retried.
+     */
+    public function hasGivenUp(Service $service, string $action): bool
+    {
+        $entry = ModuleQueue::where('service_id', $service->id)
+            ->where('action', $action)
+            ->where('status', 'failed')
+            ->latest('id')
+            ->first();
+
+        return $entry !== null && self::willNeverSucceed((string) $entry->last_error);
+    }
+
+    public static function willNeverSucceed(string $error): bool
+    {
+        foreach ([
+            'not found in service notes',
+            'no account',
+            'account does not exist',
+            'no such account',
+            'username not set',
+            'no server module configured',
+        ] as $phrase) {
+            if (stripos($error, $phrase) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function enqueueRetry(Service $service, string $action, string $error, array $payload = []): void
     {
         run_hook('ModuleActionFailed', ['service' => $service, 'action' => $action, 'error' => $error]);
 
         try {
+            // Anything not finished counts, including an entry the queue has
+            // already given up on. Looking only at pending ones meant a nightly
+            // job that keeps failing wrote a fresh row - and raised the same
+            // alert - every single night, for as long as it stayed broken.
             $existing = ModuleQueue::where('service_id', $service->id)
                 ->where('action', $action)
-                ->where('status', 'pending')
+                ->whereIn('status', ['pending', 'failed'])
                 ->first();
 
+            $permanent = self::willNeverSucceed($error);
+
             if ($existing) {
-                $existing->update(['last_error' => $error]);
+                $reopened = ! $permanent && $existing->status === 'failed';
+
+                $existing->update([
+                    'last_error' => $error,
+                    // Given up on before, but the work is still wanted: let it
+                    // try again rather than leaving the row dead. A server that
+                    // was unreachable last night may answer tonight. Something
+                    // that cannot come right is left alone.
+                    'status' => $permanent ? 'failed' : 'pending',
+                    'attempts' => $reopened ? 0 : $existing->attempts,
+                    'next_attempt_at' => $reopened ? now()->addMinutes(5) : $existing->next_attempt_at,
+                    'payload' => $payload ?: $existing->payload,
+                ]);
 
                 return;
             }
@@ -245,17 +309,34 @@ class ProvisioningService
             ModuleQueue::create([
                 'service_id' => $service->id,
                 'action' => $action,
-                'status' => 'pending',
+                'status' => $permanent ? 'failed' : 'pending',
                 'attempts' => 0,
-                'next_attempt_at' => now()->addMinutes(5),
+                'next_attempt_at' => $permanent ? null : now()->addMinutes(5),
                 'last_error' => $error,
                 'payload' => $payload ?: null,
             ]);
 
-            app(NotificationService::class)->dispatch('module.failed', [
-                'event_type' => 'module.failed',
-                'subject' => 'Module action failed — queued for retry',
-                'message' => "Module '{$action}' failed for service #{$service->id} ({$service->domain}): {$error}. Queued for automatic retry.",
+            // r117-alert: say which of the two happened. A refusal that cannot
+            // change is recorded as failed and never picked up again, so the
+            // alert written for the retry case - "queued for automatic retry" -
+            // is the only word the operator ever gets, and it tells them to
+            // wait for something that is not coming.
+            $alert = $permanent
+                ? [
+                    'event' => 'module.failed_permanently',
+                    'subject' => 'Module action failed — will not be retried',
+                    'message' => "Module '{$action}' failed for service #{$service->id} ({$service->domain}): {$error}. This cannot be retried and needs attention.",
+                ]
+                : [
+                    'event' => 'module.failed',
+                    'subject' => 'Module action failed — queued for retry',
+                    'message' => "Module '{$action}' failed for service #{$service->id} ({$service->domain}): {$error}. Queued for automatic retry.",
+                ];
+
+            app(NotificationService::class)->dispatch($alert['event'], [
+                'event_type' => $alert['event'],
+                'subject' => $alert['subject'],
+                'message' => $alert['message'],
                 'service_id' => $service->id,
                 'action' => $action,
             ]);

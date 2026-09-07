@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\Client;
 
 use App\Contracts\RegistrarModuleInterface;
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Concerns\ResolvesClient;
+use App\Http\Controllers\Controller;
 use App\Models\Domain;
+use App\Services\DomainService;
 use App\Services\Module\ModuleRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,6 +20,13 @@ class DomainController extends Controller
         $domains = Domain::where('client_id', $this->getClientId())->orderBy('id', 'desc')->paginate(25);
 
         return view('client.domains.index', compact('domains'));
+    }
+
+    public function transfer(Request $request)
+    {
+        $domain = $request->query('domain', '');
+
+        return view('client.domains.transfer', compact('domain'));
     }
 
     public function show(Domain $domain)
@@ -62,7 +70,14 @@ class DomainController extends Controller
             'ns5' => $request->ns5,
         ]);
 
-        $domain->update(['nameservers' => json_encode($nameservers)]);
+        // r132-client: through the service, which tells the registrar. Writing
+        // the column here reported success for a change the registry never saw.
+        $result = app(DomainService::class)->updateNameservers($domain, $nameservers);
+
+        if (! $result['success']) {
+            return redirect()->route('client.domains.show', $domain)
+                ->with('error', $result['message']);
+        }
 
         return redirect()->route('client.domains.show', $domain)
             ->with('success', __('messages.success.nameservers_updated'));
@@ -107,13 +122,18 @@ class DomainController extends Controller
         $payment = $domain->payment_method === 'none' ? 'banktransfer' : 'none';
         $domain->update(['payment_method' => $payment]);
 
-        $state = $payment !== 'none' ? 'enabled' : 'disabled';
+        // A translated word, not the raw English one: this sentence is shown to
+        // the customer in their own language, and ':state' was being filled with
+        // "enabled" regardless of locale.
+        $state = $payment !== 'none'
+            ? __('client.status.enabled')
+            : __('client.status.disabled');
 
         return redirect()->route('client.domains.show', $domain)
             ->with('success', __('messages.success.auto_renew_toggled', ['state' => $state]));
     }
 
-    public function getEppCode(Domain $domain)
+    public function getEppCode(Request $request, Domain $domain)
     {
         $this->authorizeClientDomain($domain);
 
@@ -130,9 +150,22 @@ class DomainController extends Controller
             }
         }
 
-        return response()->json([
-            'epp_code' => $eppCode ?? __('messages.info.contact_support_for_epp'),
-        ]);
+        // The page uses a plain link, so a browser gets the code back on the
+        // domain page. A caller that asks for JSON still gets JSON: the endpoint
+        // answered that way before and there is no reason to take it away.
+        if ($request->wantsJson()) {
+            return response()->json([
+                'epp_code' => $eppCode ?? __('messages.info.contact_support_for_epp'),
+            ]);
+        }
+
+        if (! $eppCode) {
+            return redirect()->route('client.domains.show', $domain)
+                ->with('error', __('messages.info.contact_support_for_epp'));
+        }
+
+        return redirect()->route('client.domains.show', $domain)
+            ->with('epp_code', $eppCode);
     }
 
     private function registrarFor(Domain $domain): ?RegistrarModuleInterface

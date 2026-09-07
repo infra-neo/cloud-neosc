@@ -5,11 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Models\BillableItem;
 use App\Models\Client;
 use App\Models\Currency;
+use App\Enums\InvoiceStatus;
+use Illuminate\Validation\Rule;
 use App\Models\Invoice;
 use App\Models\Transaction;
 use App\Services\InvoiceGenerationService;
+use App\Services\InvoiceService;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class InvoiceApiController extends BaseApiController
 {
@@ -45,16 +50,79 @@ class InvoiceApiController extends BaseApiController
             'duedate' => 'nullable|date',
             'paymentmethod' => 'nullable|string',
             'status' => 'nullable|in:draft,unpaid,paid',
-        ]);
-        $invoice = Invoice::create([
-            'client_id' => $validated['userid'],
-            'date' => $validated['date'] ?? now()->format('Y-m-d'),
-            'due_date' => $validated['duedate'] ?? now()->addDays(7)->format('Y-m-d'),
-            'payment_method' => $validated['paymentmethod'] ?? null,
-            'status' => $validated['status'] ?? 'unpaid',
+            'notes' => 'nullable|string',
+            'items' => 'nullable|array',
+            'items.*.description' => 'required_with:items|string|max:255',
+            'items.*.amount' => 'required_with:items|numeric',
+            'items.*.taxed' => 'nullable|boolean',
         ]);
 
-        return $this->success(['invoiceid' => $invoice->id]);
+        $items = $this->lineItemsFrom($request, $validated);
+
+        if ($items === []) {
+            return $this->error('An invoice needs at least one line: send items[] or itemdescription1 with itemamount1.', 422);
+        }
+
+        $client = Client::findOrFail($validated['userid']);
+
+        // Through the invoice service, so the totals, the tax, the customer's
+        // group discount and the created event happen as they do everywhere
+        // else. This endpoint used to write an empty invoice on its own.
+        $invoice = app(InvoiceService::class)->createInvoice($client, $items, array_filter([
+            'date' => $validated['date'] ?? null,
+            'due_date' => $validated['duedate'] ?? null,
+            'payment_method' => $validated['paymentmethod'] ?? null,
+            'status' => $validated['status'] ?? null,
+            'notes' => $validated['notes'] ?? null,
+        ]));
+
+        return $this->success(['invoiceid' => $invoice->id, 'total' => (float) $invoice->total]);
+    }
+
+    /**
+     * The lines, however they were sent: items[] or WHMCS-style numbered fields.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function lineItemsFrom(Request $request, array $validated): array
+    {
+        $items = [];
+
+        foreach ($validated['items'] ?? [] as $item) {
+            $items[] = [
+                'type' => 'Other',
+                'rel_id' => 0,
+                'description' => $item['description'],
+                'amount' => (float) $item['amount'],
+                'taxed' => (bool) ($item['taxed'] ?? true),
+            ];
+        }
+
+        for ($i = 1; $i <= 50; $i++) {
+            $description = $request->input("itemdescription{$i}");
+
+            if ($description === null || $description === '') {
+                continue;
+            }
+
+            $amount = $request->input("itemamount{$i}");
+
+            if (! is_numeric($amount)) {
+                throw ValidationException::withMessages([
+                    "itemamount{$i}" => "itemamount{$i} is required and must be a number.",
+                ]);
+            }
+
+            $items[] = [
+                'type' => 'Other',
+                'rel_id' => 0,
+                'description' => (string) $description,
+                'amount' => (float) $amount,
+                'taxed' => (bool) $request->input("itemtaxed{$i}", true),
+            ];
+        }
+
+        return $items;
     }
 
     public function updateInvoice(Request $request)
@@ -63,6 +131,19 @@ class InvoiceApiController extends BaseApiController
         if (! $invoice) {
             return $this->error('Invoice Not Found', 404);
         }
+        // Collecting the money runs entirely off these two. The overdue run
+        // marks unpaid invoices, the late fee and the suspension act on overdue
+        // ones, the reminders go out for unpaid and overdue, and the client area
+        // lists what is owed - all by matching the status string, which is not
+        // cast to the enum. One outside the nine the panel knows left the
+        // invoice in none of those: the customer owed the money and was never
+        // asked for it again. The due date is the clock all of it runs on and
+        // was taking any string at all.
+        $request->validate([
+            'status' => ['sometimes', Rule::enum(InvoiceStatus::class)],
+            'due_date' => ['sometimes', 'date'],
+        ]);
+
         foreach (['status', 'due_date', 'payment_method', 'notes'] as $f) {
             if ($request->has($f)) {
                 $invoice->$f = $request->$f;
@@ -73,19 +154,85 @@ class InvoiceApiController extends BaseApiController
         return $this->success(['invoiceid' => $invoice->id]);
     }
 
-    public function addInvoicePayment(Request $request)
+    /**
+     * Record a payment against an invoice.
+     *
+     * This used to write the transaction and flip the status by hand, which
+     * skipped everything a payment is supposed to set off: the same reference
+     * could be banked twice, a part payment was not recognised as one, an
+     * overpayment disappeared instead of becoming credit, and nothing waiting
+     * on a paid invoice - a suspended service, an order still to be
+     * provisioned, an upgrade to apply - was ever told. PaymentService is the
+     * one place that does all of it, and every other way of taking money
+     * already goes through it.
+     */
+    /**
+     * Apply existing client credit to an invoice. This used to be an alias of
+     * addcredit - an operation that moves money in the OPPOSITE direction -
+     * so a call shaped like the reference screen described (clientid,
+     * invoiceid, amount) increased the client's balance and left the invoice
+     * unpaid.
+     */
+    public function applyCredit(Request $request, InvoiceService $invoices)
     {
         $invoice = Invoice::find($request->invoiceid);
         if (! $invoice) {
             return $this->error('Invoice Not Found', 404);
         }
-        $validated = $request->validate(['transid' => 'required|string', 'amount' => 'required|numeric', 'gateway' => 'nullable|string']);
-        $tx = Transaction::create(['client_id' => $invoice->client_id, 'date' => now()->format('Y-m-d'), 'description' => "Invoice #{$invoice->id} Payment", 'amount_in' => $validated['amount'], 'transaction_id' => $validated['transid'], 'invoice_id' => $invoice->id, 'gateway' => $validated['gateway'] ?? null]);
-        if ($validated['amount'] >= $invoice->total) {
-            $invoice->update(['status' => 'paid', 'date_paid' => now()]);
+
+        $validated = $request->validate(['amount' => 'required|numeric|min:0.01']);
+
+        // clientid is optional, but when given it must be the invoice's owner
+        // - silently spending some OTHER client's balance is how books stop
+        // adding up.
+        if ($request->filled('clientid') && (int) $request->clientid !== (int) $invoice->client_id) {
+            return $this->error('Client ID does not match the invoice', 400);
         }
 
-        return $this->success(['transactionid' => $tx->id]);
+        $amount = (float) $validated['amount'];
+        if ($amount > (float) $invoice->client->credit) {
+            return $this->error('Amount exceeds the client credit balance', 400);
+        }
+
+        $invoice = $invoices->applyCredit($invoice, $amount);
+
+        return $this->success([
+            'invoiceid' => $invoice->id,
+            'amount' => $amount,
+            'remaining_credit' => (float) $invoice->client->fresh()->credit,
+        ]);
+    }
+
+    public function addInvoicePayment(Request $request, PaymentService $payments)
+    {
+        $invoice = Invoice::find($request->invoiceid);
+        if (! $invoice) {
+            return $this->error('Invoice Not Found', 404);
+        }
+        $validated = $request->validate(['transid' => 'required|string', 'amount' => 'required|numeric|min:0.01', 'gateway' => 'nullable|string']);
+
+        $result = $payments->applyPayment(
+            $invoice,
+            $validated['gateway'] ?? 'banktransfer',
+            $validated['transid'],
+            (float) $validated['amount'],
+        );
+
+        if (! ($result['success'] ?? false)) {
+            return $this->error($result['message'] ?? 'Payment could not be recorded', 422);
+        }
+
+        $transaction = Transaction::where('transaction_id', $validated['transid'])
+            ->where('invoice_id', $invoice->id)
+            ->latest('id')
+            ->first();
+
+        return $this->success([
+            'transactionid' => $transaction?->id,
+            'status' => $result['status'] ?? $invoice->fresh()->status,
+            'balance' => $result['balance'] ?? null,
+            'duplicate' => (bool) ($result['duplicate'] ?? false),
+        ]);
     }
 
     public function addTransaction(Request $request)

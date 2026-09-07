@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\SslOrder;
+use App\Mail\Concerns\LocalizesToRecipient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -13,11 +14,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class SslCertificateExpiringMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public SslOrder $order,
         public int $daysRemaining,
-    ) {}
+    ) {
+        $this->localizeTo($this->order);
+    }
 
     public function envelope(): Envelope
     {
@@ -29,7 +33,7 @@ class SslCertificateExpiringMail extends Mailable implements ShouldQueue
     public function content(): Content
     {
         return new Content(
-            view: 'emails.ssl-certificate-expiring',
+            markdown: 'emails.ssl-certificate-expiring',
             with: [
                 'order' => $this->order,
                 'daysRemaining' => $this->daysRemaining,

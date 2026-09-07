@@ -60,6 +60,21 @@ test('api pnlcsdetails returns version', function () {
     $response->assertStatus(200)->assertJsonStructure(['result', 'pnlcs' => ['version']]);
 });
 
+test('api reports the same company name as every screen', function () {
+    // The API used to read the raw CompanyName setting while the panel, the
+    // invoices and the emails all go through company_name(), which prefers the
+    // white-label override - so integrations were told a different name than
+    // customers ever saw whenever the override was set.
+    \App\Models\Setting::set('CompanyName', 'Registered Name Ltd', 'general');
+    \App\Models\Setting::set('whitelabel_company_name', 'Customer-Facing Brand', 'whitelabel');
+    app()->forgetInstance('pnlcs.company_name');
+
+    $response = $this->getJson('/api/v1/pnlcsdetails', $this->apiHeaders);
+
+    $response->assertStatus(200)
+        ->assertJsonPath('pnlcs.company_name', 'Customer-Facing Brand');
+});
+
 test('api openticket creates ticket', function () {
     // This used to post against department 1 and assert nothing at all when it
     // was missing, so it passed whatever the endpoint did.
@@ -77,7 +92,10 @@ test('api openticket creates ticket', function () {
     $ticket = Ticket::where('tid', $response->json('tid'))->firstOrFail();
     expect($ticket->department_id)->toBe($department->id)
         ->and($ticket->title)->toBe('Test Ticket')
-        ->and($ticket->status)->toBe('open');
+        // 'Open' is what every other door writes, TicketService included; the
+        // api's lower-case 'open' was the odd one out and only survived
+        // because MySQL compares these two the same.
+        ->and($ticket->status)->toBe('Open');
 });
 
 test('api gettldpricing returns pricing', function () {

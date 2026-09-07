@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Affiliate;
+use App\Mail\Concerns\LocalizesToRecipient;
 use App\Models\Client;
 use App\Models\Setting;
 use Illuminate\Bus\Queueable;
@@ -15,11 +16,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class AffiliateWelcomeMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public Client $client,
         public Affiliate $affiliate
-    ) {}
+    ) {
+        $this->localizeTo($this->client);
+    }
 
     public function envelope(): Envelope
     {
@@ -33,7 +37,7 @@ class AffiliateWelcomeMail extends Mailable implements ShouldQueue
             with: [
                 'client' => $this->client,
                 'affiliate' => $this->affiliate,
-                'companyName' => Setting::get('CompanyName', 'PNLCS'),
+                'companyName' => company_name(),
             ],
         );
     }

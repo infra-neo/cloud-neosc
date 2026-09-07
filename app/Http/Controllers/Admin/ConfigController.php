@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Constants\Permissions;
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
 use App\Models\Admin;
 use App\Models\AdminRole;
-use App\Models\Affiliate;
 use App\Models\Announcement;
 use App\Models\ApiCredential;
 use App\Models\BannedEmail;
@@ -19,6 +19,8 @@ use App\Models\ConfigOptionGroup;
 use App\Models\ConfigOptionLink;
 use App\Models\ConfigOptionSub;
 use App\Models\Currency;
+use App\Models\CustomField;
+use App\Models\CustomFieldValue;
 use App\Models\DomainPricing;
 use App\Models\Download;
 use App\Models\DownloadCategory;
@@ -38,6 +40,7 @@ use App\Models\Quote;
 use App\Models\RegistrarSettings;
 use App\Models\Server;
 use App\Models\ServerGroup;
+use App\Models\Service;
 use App\Models\Setting;
 use App\Models\SslModuleSettings;
 use App\Models\TaxRule;
@@ -48,9 +51,11 @@ use App\Models\TicketStatus;
 use App\Models\TodoItem;
 use App\Models\Transaction;
 use App\Services\Module\ModuleRegistry;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ConfigController extends Controller
 {
@@ -116,17 +121,15 @@ class ConfigController extends Controller
     {
         return view('admin.config.admin-roles', [
             'roles' => AdminRole::withCount('admins')->get(),
+            'permissionGroups' => Permissions::grouped(),
         ]);
     }
 
     public function storeRole(Request $request)
     {
-        $v = $request->validate([
-            'name' => 'required|unique:admin_roles',
-            'description' => 'nullable|string',
-            'is_full_admin' => 'boolean',
-        ]);
+        $v = $request->validate($this->roleRules());
         $v['is_full_admin'] = $request->boolean('is_full_admin');
+        $v['permissions'] = $v['is_full_admin'] ? [] : ($v['permissions'] ?? []);
         AdminRole::create($v);
 
         return back()->with('success', __('messages.success.role_created_successfully'));
@@ -134,15 +137,39 @@ class ConfigController extends Controller
 
     public function updateRole(Request $request, AdminRole $role)
     {
-        $v = $request->validate([
-            'name' => 'required|unique:admin_roles,name,'.$role->id,
-            'description' => 'nullable|string',
-            'is_full_admin' => 'boolean',
-        ]);
+        $v = $request->validate($this->roleRules($role));
         $v['is_full_admin'] = $request->boolean('is_full_admin');
+        $v['permissions'] = $v['is_full_admin'] ? [] : ($v['permissions'] ?? []);
+
+        // Editing your own role down to something that cannot administer roles
+        // leaves the installation with no way back in but the database.
+        $self = auth('admin')->user();
+
+        if ($self && $self->role_id === $role->id
+            && ! $v['is_full_admin']
+            && ! in_array(Permissions::MANAGE_ROLES, $v['permissions'], true)) {
+            return back()->withInput()->withErrors([
+                'permissions' => __('messages.error.cannot_remove_own_role_management'),
+            ]);
+        }
+
         $role->update($v);
 
         return back()->with('success', __('messages.success.role_updated_successfully'));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function roleRules(?AdminRole $role = null): array
+    {
+        return [
+            'name' => 'required|unique:admin_roles'.($role ? ',name,'.$role->id : ''),
+            'description' => 'nullable|string',
+            'is_full_admin' => 'boolean',
+            'permissions' => 'nullable|array',
+            'permissions.*' => Rule::in(Permissions::all()),
+        ];
     }
 
     public function destroyRole(AdminRole $role)
@@ -244,52 +271,180 @@ class ConfigController extends Controller
         return back()->with('success', __('messages.success.currency_set_default'));
     }
 
+    // ===== CUSTOM CLIENT FIELDS =====
+
+    public function customFields()
+    {
+        return view('admin.config.custom-fields', [
+            'customFields' => CustomField::where('type', 'client')->orderBy('sort_order')->orderBy('id')->get(),
+        ]);
+    }
+
+    public function storeCustomField(Request $request)
+    {
+        $v = $request->validate([
+            'field_name' => ['required', 'string', 'max:255'],
+            'field_type' => ['required', 'in:text,textarea,select,checkbox,number,date'],
+            'description' => ['nullable', 'string', 'max:255'],
+            'field_options' => ['nullable', 'string', 'max:1000'],
+            'regex' => ['nullable', 'string', 'max:255'],
+            'required' => ['nullable', 'boolean'],
+            'admin_only' => ['nullable', 'boolean'],
+            'show_on_order' => ['nullable', 'boolean'],
+            'show_on_invoice' => ['nullable', 'boolean'],
+            'sort_order' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        CustomField::create([
+            'type' => 'client',
+            'rel_id' => 0,
+            'field_name' => $v['field_name'],
+            'field_type' => $v['field_type'],
+            'description' => $v['description'] ?? null,
+            // One option per line, colon splits label from value: "Sp. z o.o. :Sp. z o.o."
+            'field_options' => $v['field_options'] ?? null,
+            'regex' => $v['regex'] ?? null,
+            'required' => (bool) ($v['required'] ?? false),
+            'admin_only' => (bool) ($v['admin_only'] ?? false),
+            'show_on_order' => (bool) ($v['show_on_order'] ?? false),
+            'show_on_invoice' => (bool) ($v['show_on_invoice'] ?? false),
+            'sort_order' => (int) ($v['sort_order'] ?? 0),
+        ]);
+
+        return back()->with('success', __('messages.success.custom_field_added'));
+    }
+
+    public function updateCustomField(Request $request, CustomField $customField)
+    {
+        $v = $request->validate([
+            'field_name' => ['required', 'string', 'max:255'],
+            'field_type' => ['required', 'in:text,textarea,select,checkbox,number,date'],
+            'description' => ['nullable', 'string', 'max:255'],
+            'field_options' => ['nullable', 'string', 'max:1000'],
+            'regex' => ['nullable', 'string', 'max:255'],
+            'required' => ['nullable', 'boolean'],
+            'admin_only' => ['nullable', 'boolean'],
+            'show_on_order' => ['nullable', 'boolean'],
+            'show_on_invoice' => ['nullable', 'boolean'],
+            'sort_order' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $customField->update([
+            'field_name' => $v['field_name'],
+            'field_type' => $v['field_type'],
+            'description' => $v['description'] ?? null,
+            'field_options' => $v['field_options'] ?? null,
+            'regex' => $v['regex'] ?? null,
+            'required' => (bool) ($v['required'] ?? false),
+            'admin_only' => (bool) ($v['admin_only'] ?? false),
+            'show_on_order' => (bool) ($v['show_on_order'] ?? false),
+            'show_on_invoice' => (bool) ($v['show_on_invoice'] ?? false),
+            'sort_order' => (int) ($v['sort_order'] ?? 0),
+        ]);
+
+        return back()->with('success', __('messages.success.custom_field_updated'));
+    }
+
+    public function destroyCustomField(CustomField $customField)
+    {
+        $customField->values()->delete();
+        $customField->delete();
+
+        return back()->with('success', __('messages.success.custom_field_deleted'));
+    }
+
     // ===== TAX RULES =====
 
     public function tax()
     {
-        // The screen reads $taxes; passing 'rules' meant it always showed
-        // the empty state, however many rules were configured.
-        return view('admin.config.tax', [
-            'taxes' => TaxRule::orderBy('level')->orderBy('country')->get(),
-        ]);
+        $groups = TaxRule::orderBy('country')->orderBy('state')->orderByDesc('is_default')->orderBy('id')->get()
+            ->groupBy(fn ($r) => $r->country."\x1F".$r->state)
+            ->map(fn ($rules) => (object) [
+                'country' => $rules->first()->country,
+                'state' => $rules->first()->state,
+                'rules' => $rules,
+                'default' => $rules->firstWhere('is_default', true) ?? $rules->first(),
+            ])
+            ->values();
+
+        return view('admin.config.tax', ['groups' => $groups]);
     }
 
     public function storeTax(Request $request)
     {
-        $request->merge(['tax_rate' => $request->tax_rate ?? $request->rate]);
-        $v = $request->validate([
-            'name' => 'required',
-            'tax_rate' => 'required|numeric|min:0|max:100',
-            'country' => 'nullable|string|max:2',
-            'state' => 'nullable|string',
-            'level' => 'nullable|integer|min:1|max:2',
-        ]);
-        TaxRule::create($v);
+        $data = $this->validateTaxGroup($request);
+        $this->saveGroupRates($data['country'], $data['state'], $data['rates'], $data['default_index']);
 
         return back()->with('success', __('messages.success.tax_rule_added'));
     }
 
-    public function updateTax(Request $request, TaxRule $taxRule)
+    public function updateTax(Request $request, string $country, ?string $state = '')
     {
-        $request->merge(['tax_rate' => $request->tax_rate ?? $request->rate]);
-        $v = $request->validate([
-            'name' => 'required',
-            'tax_rate' => 'required|numeric|min:0|max:100',
-            'country' => 'nullable|string|max:2',
-            'state' => 'nullable|string',
-            'level' => 'nullable|integer|min:1|max:2',
-        ]);
-        $taxRule->update($v);
+        $country = $this->normaliseTaxCountry($country);
+        $data = $this->validateTaxGroup($request);
+
+        // The group is keyed by country+state; moving it drops the old group.
+        if ($data['country'] !== $country || $data['state'] !== ($state ?? '')) {
+            TaxRule::where('country', $country)->where('state', $state ?? '')->delete();
+        }
+
+        $this->saveGroupRates($data['country'], $data['state'], $data['rates'], $data['default_index']);
 
         return back()->with('success', __('messages.success.tax_updated'));
     }
 
-    public function destroyTax(TaxRule $taxRule)
+    public function destroyTax(string $country, ?string $state = '')
     {
-        $taxRule->delete();
+        $country = $this->normaliseTaxCountry($country);
+        TaxRule::where('country', $country)->where('state', $state ?? '')->delete();
 
         return back()->with('success', __('messages.success.tax_deleted'));
+    }
+
+    /**
+     * The empty-country (global) group is addressed as "@global" in URLs.
+     */
+    private function normaliseTaxCountry(string $country): string
+    {
+        return $country === '@global' ? '' : $country;
+    }
+
+    /**
+     * @return array{country: string, state: string, rates: array, default_index: int}
+     */
+    private function validateTaxGroup(Request $request): array
+    {
+        $v = $request->validate([
+            'country' => 'required|string|max:2',
+            'state' => 'nullable|string|max:255',
+            'rates' => 'required|array|min:1',
+            'rates.*.name' => 'required|string|max:255',
+            'rates.*.tax_rate' => 'required|numeric|min:0|max:100',
+            'default_index' => 'nullable|integer|min:0',
+        ]);
+
+        $v['state'] ??= '';
+        $v['default_index'] = (int) ($v['default_index'] ?? 0);
+
+        return $v;
+    }
+
+    /**
+     * Replace a group's rates; exactly one of them is its default.
+     */
+    private function saveGroupRates(string $country, string $state, array $rates, int $defaultIndex): void
+    {
+        TaxRule::where('country', $country)->where('state', $state)->delete();
+
+        foreach ($rates as $i => $row) {
+            TaxRule::create([
+                'name' => $row['name'],
+                'tax_rate' => $row['tax_rate'],
+                'country' => $country,
+                'state' => $state,
+                'is_default' => $i === $defaultIndex,
+            ]);
+        }
     }
 
     // ===== PROMOTIONS =====
@@ -384,9 +539,23 @@ class ConfigController extends Controller
         ]);
         // The active checkbox sends nothing when unchecked.
         $v['active'] = $request->boolean('active');
-        Server::create($v);
+        $v['hostname'] = $this->normaliseHostname($v['hostname'] ?? null);
 
-        return back()->with('success', __('messages.success.server_created'));
+        if ($v['hostname'] === '') {
+            return back()->withInput()->withErrors(['hostname' => __('admin.servers.hostname_invalid')]);
+        }
+
+        if ($error = $this->credentialError($request)) {
+            return back()->withInput()->withErrors(['access_hash' => $error]);
+        }
+
+        $server = Server::create($v);
+
+        $warning = $this->hostnameWarning($server->hostname, $server->ip_address);
+
+        return back()
+            ->with('success', __('messages.success.server_created'))
+            ->with($warning ? 'warning' : 'ignored', $warning);
     }
 
     // ===== DOMAIN PRICING =====
@@ -435,13 +604,13 @@ class ConfigController extends Controller
 
                 return (object) [
                     'name' => $name,
-                    'label' => $module?->getModuleName() ?? ucfirst($name),
+                    'label' => payment_method_label($name) ?: ($module?->getModuleName() ?? ucfirst($name)),
                     'fields' => $module?->getConfigFields() ?? [],
                     'values' => $values->toArray(),
                     'active' => (string) ($values['active'] ?? '0') === '1',
                 ];
             })
-            ->sortBy('label')
+            ->sortBy(fn ($gw) => [$gw->active ? 0 : 1, $gw->label])
             ->values();
 
         return view('admin.config.gateways', ['gateways' => $gateways]);
@@ -457,27 +626,48 @@ class ConfigController extends Controller
         $registrars = collect(app(ModuleRegistry::class)->getRegistrarModules())
             ->merge($stored->keys())
             ->unique()
-            ->sort()
             ->map(function ($name) use ($stored) {
+                $module = app(ModuleRegistry::class)->getRegistrarModule($name);
                 $settings = ($stored[$name] ?? collect())->pluck('value', 'setting');
 
                 return (object) [
                     'registrar_name' => $name,
-                    'description' => $settings->get('name', ucfirst($name)),
-                    'disabled' => $settings->get('visible', '1') === '0',
-                    'settings' => $settings->except(['name', 'visible'])->toArray(),
+                    'label' => $settings->get('name', $module?->getModuleName() ?? ucfirst($name)),
+                    'fields' => $module?->getConfigFields() ?? [],
+                    'values' => $settings->toArray(),
+                    'help' => ($module && method_exists($module, 'getConfigHelp')) ? $module->getConfigHelp() : null,
+                    'testable' => $name === 'hrd',
+                    // Manual works out of the box; every other registrar is
+                    // off until the operator switches it on.
+                    'active' => $name === 'manual'
+                        ? $settings->get('visible', '1') !== '0'
+                        : $settings->get('visible') === '1',
                 ];
-            })->values();
+            })
+            ->sortBy(fn ($reg) => [$reg->active ? 0 : 1, $reg->label])
+            ->values();
 
         return view('admin.config.registrars', ['registrars' => $registrars]);
     }
 
     // ===== EMAIL TEMPLATES =====
 
-    public function emailTemplates()
+    public function emailTemplates(Request $request)
     {
+        $languages = \App\Models\Language::orderBy('sort_order')->get();
+
+        $lang = (string) $request->query('lang', '');
+        if ($lang === '' || ! $languages->contains('code', $lang)) {
+            $default = \App\Models\Language::getDefault();
+            $lang = $default->code ?? 'en';
+        }
+
+        $templates = EmailTemplate::where('language', $lang)->orderBy('type')->get();
+
         return view('admin.config.email-templates', [
-            'templates' => EmailTemplate::orderBy('type')->get(),
+            'templates' => $templates,
+            'languages' => $languages,
+            'selectedLang' => $lang,
         ]);
     }
 
@@ -607,15 +797,6 @@ class ConfigController extends Controller
     {
         return view('admin.config.network-issues', [
             'networkIssues' => NetworkIssue::orderBy('id', 'desc')->get(),
-        ]);
-    }
-
-    // ===== AFFILIATES =====
-
-    public function affiliates()
-    {
-        return view('admin.config.affiliates', [
-            'affiliates' => Affiliate::with('client')->get(),
         ]);
     }
 
@@ -767,13 +948,134 @@ class ConfigController extends Controller
             }
         }
         $v['active'] = $request->boolean('active');
+
+        if (array_key_exists('hostname', $v)) {
+            $v['hostname'] = $this->normaliseHostname($v['hostname']);
+
+            if ($v['hostname'] === '') {
+                return back()->withInput()->withErrors(['hostname' => __('admin.servers.hostname_invalid')]);
+            }
+        }
+
+        if ($error = $this->credentialError($request, $server)) {
+            return back()->withInput()->withErrors(['access_hash' => $error]);
+        }
+
         $server->update($v);
 
-        return back()->with('success', __('messages.success.server_updated'));
+        $warning = $this->hostnameWarning($server->hostname, $server->ip_address);
+
+        return back()
+            ->with('success', __('messages.success.server_updated'))
+            ->with($warning ? 'warning' : 'ignored', $warning);
+    }
+
+    /**
+     * Refuse a server record that cannot possibly sign in.
+     *
+     * Almost every module authenticates with the API key; a password in the
+     * other box is not a substitute and the panel used to accept it in
+     * silence, leaving provisioning to fail later with "Access denied".
+     */
+    /**
+     * The address as a module can use it.
+     *
+     * Operators paste what their browser shows them - a scheme, a port, a
+     * trailing slash - and every module builds its URL by hand from this
+     * field. Anything but the host itself produced a URL that could not
+     * resolve and an error that explained nothing.
+     */
+    private function normaliseHostname(?string $hostname): string
+    {
+        $hostname = trim((string) $hostname);
+
+        if ($hostname === '') {
+            return '';
+        }
+
+        // Scheme, path, credentials, trailing slash.
+        $hostname = preg_replace('#^[a-z][a-z0-9+.-]*://#i', '', $hostname) ?? $hostname;
+        $hostname = explode('/', $hostname, 2)[0];
+        $hostname = str_contains($hostname, '@') ? substr($hostname, strrpos($hostname, '@') + 1) : $hostname;
+
+        // A port on the end - but not the colons of an IPv6 address.
+        if (! str_contains($hostname, '[') && substr_count($hostname, ':') === 1) {
+            $hostname = explode(':', $hostname, 2)[0];
+        }
+
+        return trim($hostname, " \t\n\r\0\x0B.");
+    }
+
+    private function credentialError(Request $request, ?Server $existing = null): ?string
+    {
+        // A record still being set up can be saved inactive and finished
+        // later; an active one is a server the panel will try to provision on.
+        if (! $request->boolean('active')) {
+            return null;
+        }
+
+        $need = app(ModuleRegistry::class)->serverCredentialRequirement($request->input('type'));
+
+        $token = $request->filled('access_hash') ? $request->input('access_hash') : $existing?->access_hash;
+        $password = $request->filled('password') ? $request->input('password') : $existing?->password;
+
+        if ($need === 'token' && blank($token)) {
+            return __('admin.servers.needs_api_token', ['type' => strtoupper((string) $request->input('type'))]);
+        }
+
+        if ($need === 'either' && blank($token) && blank($password)) {
+            return __('admin.servers.needs_credentials', ['type' => strtoupper((string) $request->input('type'))]);
+        }
+
+        return null;
+    }
+
+    /**
+     * A hostname that resolves somewhere other than the address beside it is
+     * the likeliest way to point a server record at the wrong machine.
+     */
+    private function hostnameWarning(?string $hostname, ?string $ip): ?string
+    {
+        $hostname = trim((string) $hostname);
+        $ip = trim((string) $ip);
+
+        if ($hostname === '' || $ip === '' || filter_var($hostname, FILTER_VALIDATE_IP)) {
+            return null;
+        }
+
+        $resolved = @gethostbynamel($hostname) ?: [];
+
+        if ($resolved === []) {
+            return __('admin.servers.hostname_unresolved', ['host' => $hostname]);
+        }
+
+        if (! in_array($ip, $resolved, true)) {
+            return __('admin.servers.hostname_mismatch', [
+                'host' => $hostname,
+                'resolved' => implode(', ', $resolved),
+                'ip' => $ip,
+            ]);
+        }
+
+        return null;
     }
 
     public function destroyServer(Server $server)
     {
+        // Accounts that still exist somewhere. A terminated or cancelled
+        // service has nothing left on the machine, so it does not hold the
+        // record hostage.
+        $live = Service::where('server_id', $server->id)
+            ->whereNotIn('status', ['terminated', 'cancelled', 'fraud'])
+            ->count();
+
+        if ($live > 0) {
+            return back()->with('error', __('admin.servers.has_services', [
+                'count' => $live,
+                'name' => $server->name,
+            ]));
+        }
+
         $server->delete();
 
         return back()->with('success', __('messages.success.server_deleted'));
@@ -793,6 +1095,28 @@ class ConfigController extends Controller
         $elapsed = round((microtime(true) - $start) * 1000);
         if ($conn) {
             fclose($conn);
+
+            // The port being open says nothing about the credentials. This
+            // used to stop here and report success, so a server that could
+            // never sign in was given a green light and provisioning failed
+            // later with nobody watching.
+            $module = app(ModuleRegistry::class)->getServerModule((string) $server->type);
+
+            if ($module) {
+                try {
+                    if (! $module->testConnection($server)) {
+                        return back()->with('error', __('admin.servers.auth_failed', [
+                            'host' => $host,
+                            'type' => strtoupper((string) $server->type),
+                        ]));
+                    }
+                } catch (\Throwable $e) {
+                    return back()->with('error', __('admin.servers.auth_error', [
+                        'host' => $host,
+                        'error' => $e->getMessage(),
+                    ]));
+                }
+            }
 
             return back()->with('success', __('admin.messages.connection_success', ['host' => $host, 'port' => $port, 'elapsed' => $elapsed, 'module' => $server->type ?? 'custom']));
         }
@@ -839,6 +1163,17 @@ class ConfigController extends Controller
 
     public function destroyServerGroup(ServerGroup $serverGroup)
     {
+        // A product selling from this group would fall back to "any server of
+        // that type" - quietly provisioning outside the group it was put in.
+        $products = Product::where('server_group_id', $serverGroup->id)->count();
+
+        if ($products > 0) {
+            return back()->with('error', __('admin.servers.group_in_use', [
+                'count' => $products,
+                'name' => $serverGroup->name,
+            ]));
+        }
+
         $serverGroup->delete();
 
         return back()->with('success', __('messages.success.server_group_deleted'));
@@ -926,14 +1261,14 @@ class ConfigController extends Controller
     // Network Issues
     public function storeNetworkIssue(Request $request)
     {
-        NetworkIssue::create($request->validate(['title' => 'required', 'description' => 'nullable|string', 'type' => 'nullable|string', 'status' => 'required', 'affected' => 'nullable|string', 'start_date' => 'nullable|date', 'end_date' => 'nullable|date']));
+        NetworkIssue::create($request->validate(['title' => 'required', 'description' => 'required|string', 'type' => 'nullable|string', 'status' => 'required', 'affected' => 'nullable|string', 'start_date' => 'nullable|date', 'end_date' => 'nullable|date']));
 
         return back()->with('success', __('messages.success.network_issue_created'));
     }
 
     public function updateNetworkIssue(Request $request, NetworkIssue $issue)
     {
-        $issue->update($request->validate(['title' => 'required', 'description' => 'nullable|string', 'type' => 'nullable|string', 'status' => 'required', 'affected' => 'nullable|string', 'start_date' => 'nullable|date', 'end_date' => 'nullable|date']));
+        $issue->update($request->validate(['title' => 'required', 'description' => 'required|string', 'type' => 'nullable|string', 'status' => 'required', 'affected' => 'nullable|string', 'start_date' => 'nullable|date', 'end_date' => 'nullable|date']));
 
         return back()->with('success', __('messages.success.network_issue_updated'));
     }
@@ -1066,6 +1401,11 @@ class ConfigController extends Controller
                 $settings = $decoded;
             }
         }
+
+        // An unticked checkbox posts nothing, so it has to be written as off
+        // rather than left as it was.
+        $settings['visible'] = $request->boolean('visible') ? '1' : '0';
+
         foreach ($settings as $key => $value) {
             RegistrarSettings::updateOrCreate(
                 ['registrar' => $registrar, 'setting' => $key],
@@ -1074,6 +1414,26 @@ class ConfigController extends Controller
         }
 
         return back()->with('success', __('messages.success.registrar_updated'));
+    }
+
+    /**
+     * Run the registrar's own connection test (only modules that offer one).
+     */
+    public function testRegistrar(Request $request, string $registrar)
+    {
+        if ($registrar !== 'hrd') {
+            return back()->with('error', __('admin.registrars.test_unavailable'));
+        }
+
+        $module = app(ModuleRegistry::class)->getRegistrarModule($registrar);
+
+        if (! $module || ! method_exists($module, 'testConnection')) {
+            return back()->with('error', __('admin.registrars.test_unavailable'));
+        }
+
+        $result = $module->testConnection();
+
+        return back()->with($result['success'] ? 'success' : 'error', $result['message']);
     }
 
     // ===== AUTOMATION =====
@@ -1111,9 +1471,53 @@ class ConfigController extends Controller
 
     // ===== API DOCS =====
 
+    /**
+     * The endpoint tables are read from the live route table, not written by
+     * hand. The hand-written version documented 26 endpoints that did not
+     * exist and left 91 real ones out; a list that is generated cannot drift,
+     * and ApiDocsTest holds the rendered page to exactly the routed set.
+     */
+    private const API_DOC_SECTIONS = [
+        \App\Http\Controllers\Api\SystemApiController::class => 'system',
+        \App\Http\Controllers\Api\ClientApiController::class => 'clients',
+        \App\Http\Controllers\Api\InvoiceApiController::class => 'invoices',
+        \App\Http\Controllers\Api\OrderApiController::class => 'orders',
+        \App\Http\Controllers\Api\TicketApiController::class => 'tickets',
+        \App\Http\Controllers\Api\DomainApiController::class => 'domains',
+        \App\Http\Controllers\Api\ServiceApiController::class => 'services',
+    ];
+
     public function apiDocs()
     {
-        return view('admin.api-docs');
+        $params = config('api_docs', []);
+        $sections = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            if (! str_starts_with($route->uri(), 'api/v1/')) {
+                continue;
+            }
+            [$controller, $method] = [$route->getControllerClass(), $route->getActionMethod()];
+            $section = self::API_DOC_SECTIONS[$controller] ?? 'system';
+            $slug = basename($route->uri());
+            $descKey = 'admin.api_docs.desc_'.$slug;
+
+            $sections[$section][$slug] = [
+                'method' => in_array('POST', $route->methods(), true) ? 'POST' : 'GET',
+                // A curated description where one was written; the method name
+                // spelled out otherwise - true but plain beats absent.
+                'desc' => \Illuminate\Support\Facades\Lang::has($descKey)
+                    ? __($descKey)
+                    : ucfirst(strtolower(preg_replace('/(?<!^)[A-Z]/', ' $0', $method))),
+                'params' => $params[$slug] ?? '',
+            ];
+        }
+
+        $sections = array_replace(array_fill_keys(array_values(self::API_DOC_SECTIONS), []), $sections);
+        foreach ($sections as &$rows) {
+            ksort($rows);
+        }
+
+        return view('admin.api-docs', ['sections' => $sections]);
     }
 
     // ===== SSL MODULES =====
@@ -1291,26 +1695,61 @@ class ConfigController extends Controller
         $rules = TicketEscalation::all();
         $departments = TicketDepartment::all();
         $admins = Admin::where('is_disabled', false)->get();
+        $statuses = TicketStatus::orderBy('sort_order')->pluck('title')->all();
+        $priorities = self::TICKET_PRIORITIES;
 
-        return view('admin.config.ticket-escalation', compact('rules', 'departments', 'admins'));
+        return view('admin.config.ticket-escalation', compact('rules', 'departments', 'admins', 'statuses', 'priorities'));
     }
 
-    public function storeTicketEscalation(Request $request)
+    /**
+     * The priorities tickets are actually opened with. The escalation form used
+     * to offer an "urgent" option that exists nowhere else: a rule set to it
+     * wrote a priority no other screen can produce and the dashboard's
+     * high-priority counter stopped seeing the ticket.
+     */
+    private const TICKET_PRIORITIES = ['low', 'medium', 'high'];
+
+    /**
+     * Validate a rule and normalise its scope columns.
+     *
+     * The scope (departments / statuses / priorities) is cast to array on the
+     * model, so it has to arrive as an array. It used to be validated as
+     * "json", which no HTML form can send and which the array cast would
+     * double-encode into a string the escalation service silently ignores —
+     * every rule then applied to every ticket in the system.
+     */
+    private function validateEscalationRule(Request $request): array
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'departments' => 'nullable|json',
-            'statuses' => 'nullable|json',
-            'priorities' => 'nullable|json',
+            'departments' => 'nullable|array',
+            'departments.*' => 'exists:ticket_departments,id',
+            'statuses' => 'nullable|array',
+            'statuses.*' => 'string|max:255',
+            'priorities' => 'nullable|array',
+            'priorities.*' => 'string|max:255',
             'time_elapsed' => 'required|integer|min:1',
             'new_department_id' => 'nullable|exists:ticket_departments,id',
-            'new_priority' => 'nullable|string',
+            'new_priority' => ['nullable', Rule::in(self::TICKET_PRIORITIES)],
             'flag_to' => 'nullable|exists:admins,id',
             'notify' => 'boolean',
             'add_reply' => 'nullable|string',
         ]);
+
         $validated['notify'] = $request->boolean('notify');
-        TicketEscalation::create($validated);
+
+        // An empty multi-select submits nothing; store an empty scope rather
+        // than leaving the previous one in place on update.
+        foreach (['departments', 'statuses', 'priorities'] as $scope) {
+            $validated[$scope] = array_values(array_map('strval', $validated[$scope] ?? []));
+        }
+
+        return $validated;
+    }
+
+    public function storeTicketEscalation(Request $request)
+    {
+        TicketEscalation::create($this->validateEscalationRule($request));
 
         return back()->with('success', __('admin.messages.escalation_rule_created'));
     }
@@ -1318,20 +1757,7 @@ class ConfigController extends Controller
     public function updateTicketEscalation(Request $request, $id)
     {
         $rule = TicketEscalation::findOrFail($id);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'departments' => 'nullable|json',
-            'statuses' => 'nullable|json',
-            'priorities' => 'nullable|json',
-            'time_elapsed' => 'required|integer|min:1',
-            'new_department_id' => 'nullable|exists:ticket_departments,id',
-            'new_priority' => 'nullable|string',
-            'flag_to' => 'nullable|exists:admins,id',
-            'notify' => 'boolean',
-            'add_reply' => 'nullable|string',
-        ]);
-        $validated['notify'] = $request->boolean('notify');
-        $rule->update($validated);
+        $rule->update($this->validateEscalationRule($request));
 
         return back()->with('success', __('admin.messages.escalation_rule_updated'));
     }
@@ -1351,7 +1777,7 @@ class ConfigController extends Controller
 
         // Every dispatchable event, so the operator can subscribe to the ones
         // that matter most — a failed backup, provisioning that gave up.
-        $eventTypes = \App\Services\NotificationService::eventTypes();
+        $eventTypes = NotificationService::eventTypes();
 
         return view('admin.config.notifications', compact('providers', 'eventTypes'));
     }
@@ -1402,8 +1828,22 @@ class ConfigController extends Controller
             'event' => 'required|string|max:255',
             'provider_id' => 'required|exists:notification_providers,id',
             'conditions' => 'nullable|array',
+            'conditions.recipient_email' => 'nullable|email',
             'active' => 'boolean',
         ]);
+
+        // An email rule with nowhere to send is accepted, listed as active and
+        // then sends nothing: the dispatcher looks for a recipient, does not
+        // find one and returns. The operator sets up alerts for failed backups,
+        // sees the rule sitting in the list, and never hears a thing.
+        $provider = NotificationProvider::find($v['provider_id']);
+
+        if ($provider?->type === 'email' && trim((string) $request->input('conditions.recipient_email')) === '') {
+            return back()->withInput()->withErrors([
+                'conditions.recipient_email' => __('admin.messages.notification_rule_needs_recipient'),
+            ]);
+        }
+
         $v['active'] = $request->boolean('active');
         $v['conditions'] = $request->input('conditions', []);
         NotificationRule::create($v);

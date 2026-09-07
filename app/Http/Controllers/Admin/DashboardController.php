@@ -32,14 +32,29 @@ class DashboardController extends Controller
     private function setupChecklist(): array
     {
         try {
-            $companyDone  = trim((string) Setting::get('whitelabel_company_name', '')) !== '';
-            $emailDone    = config('mail.default') !== 'log' && config('mail.default') !== null;
+            // The logo, and only the logo. This step used to demand the
+            // company name too, but the seeder gives every installation a
+            // CompanyName and the install wizard asks for the application name
+            // besides - so the name half was always already satisfied and only
+            // ever confused: what actually blocks a new installation from
+            // looking finished is the logo.
+            $companyDone = trim((string) Setting::get('custom_logo_path', '')) !== '';
+            // "Not the log driver" was too generous: the array driver discards
+            // mail just as completely, and an smtp mailer with no host set is a
+            // transport in name only. MailConfigProvider has already applied
+            // whatever the operator chose on the settings screen by this point,
+            // so what is read here is what would actually carry an email.
+            $mailer    = (string) config('mail.default');
+            $emailDone = ! in_array($mailer, ['', 'log', 'array'], true);
+            if ($emailDone && $mailer === 'smtp') {
+                $emailDone = trim((string) config('mail.mailers.smtp.host')) !== '';
+            }
             $gatewayDone  = GatewaySettings::query()->exists();
             $serverDone   = Server::query()->exists();
             $productDone  = Product::query()->exists();
 
             $items = [
-                ['key' => 'company',  'done' => $companyDone,  'route' => 'admin.settings.general'],
+                ['key' => 'company',  'done' => $companyDone,  'route' => 'admin.settings.appearance'],
                 ['key' => 'email',    'done' => $emailDone,    'route' => 'admin.settings.general'],
                 ['key' => 'gateway',  'done' => $gatewayDone,  'route' => 'admin.config.gateways'],
                 ['key' => 'server',   'done' => $serverDone,   'route' => 'admin.config.servers'],

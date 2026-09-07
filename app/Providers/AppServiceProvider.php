@@ -3,6 +3,10 @@
 namespace App\Providers;
 
 use App\Models\Setting;
+use App\Models\EmailTemplate;
+use App\Models\Language;
+use App\Observers\EmailTemplateObserver;
+use App\Observers\LanguageObserver;
 use App\Services\Module\ModuleRegistry;
 use App\Services\ThemeManager;
 use App\Services\ReportManager;
@@ -11,6 +15,10 @@ use App\Services\AddonManager;
 use App\View\Composers\ThemeComposer;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\URL;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -41,6 +49,33 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->useConfiguredDomainForConsoleLinks();
+
+        // How many times the API will let someone try.
+        //
+        // The admin login form allows ten attempts a minute. The API accepts
+        // the same admin username and password - it is there for WHMCS-shaped
+        // clients - and had no limit at all, so the form's limit could be
+        // walked around by posting the guesses to any API endpoint instead.
+        //
+        // A caller presenting a credential is counted on that credential, so
+        // one integration cannot use up another's allowance and guessing from
+        // a new address cannot lock a working one out. A caller presenting
+        // none is counted on its address, and gets far less room: there is no
+        // honest reason to call this API anonymously more than a few times a
+        // minute.
+        RateLimiter::for('api', function (Request $request) {
+            $credential = $request->header('X-API-Key')
+                ?? $request->bearerToken()
+                ?? $request->input('api_key')
+                ?? $request->input('identifier');
+
+            if ($credential) {
+                return Limit::perMinute(300)->by('api-key:'.sha1((string) $credential));
+            }
+
+            return Limit::perMinute(10)->by('api-ip:'.$request->ip());
+        });
         $registry = $this->app->make(ModuleRegistry::class);
 
         // Server modules
@@ -78,5 +113,54 @@ class AppServiceProvider extends ServiceProvider
             'client.auth.register',
             'sections.*',
         ], ThemeComposer::class);
+
+        EmailTemplate::observe(EmailTemplateObserver::class);
+        Language::observe(LanguageObserver::class);
+    }
+
+    /**
+     * Address the links in mail sent from the queue or a cron.
+     *
+     * In a web request Laravel builds links from the request itself, which is
+     * right. With no request - a queue worker, a scheduled job - it falls back
+     * to the configured app URL, and in a container that URL comes from an
+     * environment variable that overrides .env. On our own install that is the
+     * host and port inside the network, so the "view your invoice" link in
+     * customer mail pointed somewhere nobody outside the box can reach.
+     *
+     * The operator already tells us the address in the general settings, so
+     * that is what console-generated links use. If it is not set, nothing
+     * changes.
+     */
+    private function useConfiguredDomainForConsoleLinks(): void
+    {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
+        try {
+            $domain = trim((string) Setting::get('Domain', ''));
+        } catch (\Throwable $e) {
+            // Install and migrate run before the table exists.
+            return;
+        }
+
+        if ($domain === '') {
+            return;
+        }
+        if (! preg_match('#^https?://#i', $domain)) {
+            $domain = 'https://'.$domain;
+        }
+        if (! filter_var($domain, FILTER_VALIDATE_URL)) {
+            return;
+        }
+
+        URL::forceRootUrl(rtrim($domain, '/'));
+
+        // The scheme has to be forced too, not just the root. Laravel takes the
+        // scheme from the request, and the console request is built from APP_URL,
+        // so an operator who configures http:// still had https:// links written
+        // into customer mail.
+        URL::forceScheme(str_starts_with(strtolower($domain), 'https://') ? 'https' : 'http');
     }
 }

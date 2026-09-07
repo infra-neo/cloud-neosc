@@ -20,6 +20,7 @@ class Client extends Model
         'last_name',
         'company_name',
         'email',
+        'billing_email',
         'address1',
         'address2',
         'city',
@@ -27,10 +28,12 @@ class Client extends Model
         'postcode',
         'country',
         'phone_number',
+        'phone_prefix',
         'tax_id',
         'status',
         'group_id',
         'currency_id',
+        'default_payment_method',
         'credit',
         'tax_exempt',
         'language',
@@ -77,6 +80,15 @@ class Client extends Model
             $client->orders()->delete();
             Affiliate::where('client_id', $client->id)->delete();
             ClientNote::where('client_id', $client->id)->delete();
+
+            // Delete the login accounts that belong only to this client so
+            // they cannot sign back in. An account shared with another client
+            // is only detached from this one.
+            $client->users()->get()->each(function (User $user) use ($client) {
+                if ($user->clients()->where('clients.id', '!=', $client->id)->doesntExist()) {
+                    $user->delete();
+                }
+            });
             $client->users()->detach(); // Remove pivot entries
         });
     }
@@ -95,6 +107,20 @@ class Client extends Model
             ->count();
     }
 
+    /**
+     * Domains still registered in this customer's name.
+     *
+     * The same reason services are counted: deleting the customer takes the
+     * domain row with it, and then nothing renews the registration and nothing
+     * says it exists, while it carries on at the registrar until it lapses.
+     */
+    public function liveDomainCount(): int
+    {
+        return $this->domains()
+            ->whereNotIn('status', ['cancelled', 'expired', 'transferred_away', 'fraud'])
+            ->count();
+    }
+
     public function getFullNameAttribute(): string
     {
         return "{$this->first_name} {$this->last_name}";
@@ -103,6 +129,30 @@ class Client extends Model
     public function getDisplayNameAttribute(): string
     {
         return $this->company_name ?: $this->full_name;
+    }
+
+    /**
+     * The address invoices and other billing mail goes to.
+     *
+     * The sign-in address belongs to the account owner and is often a
+     * personal mailbox; billing is frequently someone else. When a billing
+     * address is set it wins, otherwise the account address is used.
+     */
+    public function billingEmail(): string
+    {
+        return $this->billing_email ?: $this->email;
+    }
+
+    /** Phone with its international prefix, e.g. "+48 123 456 789". */
+    public function getFullPhoneAttribute(): ?string
+    {
+        if (empty($this->phone_number)) {
+            return null;
+        }
+
+        $prefix = $this->phone_prefix ?: \App\Support\Countries::phonePrefix($this->country);
+
+        return $prefix ? trim($prefix.' '.$this->phone_number) : $this->phone_number;
     }
 
     public function users(): BelongsToMany

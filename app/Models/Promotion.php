@@ -35,9 +35,12 @@ class Promotion extends Model
         }
 
         if (! $client) {
-            // No customer to judge the remaining rules against; the code is
-            // only as good as its own validity.
-            return ! $this->apply_once && ! $this->new_signups_only && ! $this->existing_client;
+            // A guest in the cart. This check is provisional - the order
+            // re-validates against the real client at placement - so only the
+            // rule a guest can never satisfy refuses here. Refusing
+            // new_signups_only turned the code away from exactly the people
+            // it exists for, before they had any way to sign up.
+            return ! $this->existing_client;
         }
 
         $hasOrdered = Order::where('client_id', $client->id)->exists();
@@ -84,7 +87,11 @@ class Promotion extends Model
         if ($this->max_uses > 0 && $this->uses >= $this->max_uses) {
             return false;
         }
-        if ($this->expiration_date && $this->expiration_date->isPast()) {
+        // Inclusive, like every other end date here: a quote is actionable
+        // through its valid_until day and a suspension hold that ends today
+        // still holds. The date cast put this at midnight, refusing the code
+        // for the whole of its own last day.
+        if ($this->expiration_date && $this->expiration_date->endOfDay()->isPast()) {
             return false;
         }
         if ($this->start_date && $this->start_date->isFuture()) {

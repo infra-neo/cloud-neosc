@@ -2,16 +2,17 @@
 
 namespace App\Widgets;
 
+use App\Constants\Permissions;
 use App\Contracts\WidgetModuleInterface;
 use Illuminate\Support\Facades\DB;
 
 class ActivityWidget implements WidgetModuleInterface
 {
-    public function getTitle(): string { return 'Recent Activity'; }
-    public function getDescription(): string { return 'Latest system events'; }
+    public function getTitle(): string { return __('admin.dashboard.w_activity'); }
+    public function getDescription(): string { return __('admin.dashboard.w_activity_desc'); }
     public function getColumns(): int { return 2; }
     public function getWeight(): int { return 100; }
-    public function getPermission(): ?string { return null; }
+    public function getPermission(): ?string { return Permissions::VIEW_ACTIVITY_LOG; }
     public function getCacheTtl(): int { return 60; }
 
     public function getData(): array
@@ -21,9 +22,9 @@ class ActivityWidget implements WidgetModuleInterface
 
     public function render(array $data): string
     {
-        if (empty($data)) return '<div style="padding:24px;text-align:center;color:var(--pn-muted);">No recent activity</div>';
+        if (empty($data)) return '<div style="padding:24px;text-align:center;color:var(--pn-muted);">'.__('admin.dashboard.no_recent_activity').'</div>';
         $html = "";
-        foreach ($data as $a) { $html .= '<div style="padding:8px 14px;border-bottom:1px solid var(--pn-border);font-size:12px;display:flex;justify-content:space-between;gap:8px;"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'.$a["description"].'</span><span style="color:var(--pn-muted);white-space:nowrap;">'.\Carbon\Carbon::parse($a["created_at"])->diffForHumans().'</span></div>'; }
+        foreach ($data as $a) { $html .= '<div style="padding:8px 14px;border-bottom:1px solid var(--pn-border);font-size:12px;display:flex;justify-content:space-between;gap:8px;"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'.e($a["description"]).'</span><span style="color:var(--pn-muted);white-space:nowrap;">'.\Carbon\Carbon::parse($a["created_at"])->diffForHumans().'</span></div>'; }
         return $html;
     }
 }

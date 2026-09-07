@@ -1,6 +1,9 @@
 <?php
 namespace App\Http\Controllers\Api;
+use App\Events\TicketOpened;
+use App\Events\TicketReplied;
 use App\Models\Ticket;
+use App\Services\TicketService;
 use App\Models\TicketReply;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -24,7 +27,13 @@ class TicketApiController extends BaseApiController
     public function openTicket(Request $request)
     {
         $v = $request->validate(['deptid'=>'required|exists:ticket_departments,id','subject'=>'required|string|max:255','message'=>'required|string','email'=>'required|email','priority'=>'nullable|in:low,medium,high,critical']);
-        $ticket = Ticket::create(['tid'=>strtoupper(Str::random(6)),'department_id'=>$v['deptid'],'client_id'=>$request->userid,'name'=>$request->name,'email'=>$v['email'],'title'=>$v['subject'],'message'=>$v['message'],'priority'=>$v['priority']??'medium','status'=>'open','last_reply'=>now()]);
+        // Through the one creator: six digits, checked to be free, which is
+        // what the mail import matches a reply against.
+        $ticket = app(TicketService::class)->createTicket(['department_id'=>$v['deptid'],'client_id'=>$request->userid,'name'=>$request->name,'email'=>$v['email'],'title'=>$v['subject'],'message'=>$v['message'],'priority'=>$v['priority']??'medium']);
+        // The same event every other door raises: the acknowledgement to the
+        // customer and the alert to support.
+        event(new TicketOpened($ticket, (bool) $request->adminusername));
+
         return $this->success(['tid'=>$ticket->tid,'ticketid'=>$ticket->id]);
     }
     public function addTicketReply(Request $request)
@@ -32,8 +41,17 @@ class TicketApiController extends BaseApiController
         $ticket = Ticket::find($request->ticketid);
         if (!$ticket) return $this->error('Ticket Not Found', 404);
         $v = $request->validate(['message'=>'required|string']);
-        $reply = $ticket->replies()->create(['message'=>$v['message'],'admin'=>$request->adminusername,'client_id'=>$request->userid]);
-        $ticket->recordReply($request->adminusername ? 'answered' : 'customer-reply');
+        // Through the one place that adds a reply, which also picks the status
+        // the rest of the application writes - 'Answered' or 'Customer-Reply',
+        // not the lower-case pair this used to write.
+        $reply = app(TicketService::class)->addReply($ticket, ['message'=>$v['message'],'admin'=>$request->adminusername,'client_id'=>$request->userid]);
+
+        // And the event the other three doors raise. Without it the reply was
+        // written into the ticket and nobody was told: no answer emailed to the
+        // customer, no notification rule fired, and the panel showing the
+        // ticket as answered.
+        event(new TicketReplied($ticket->fresh(), $v['message'], (bool) $request->adminusername));
+
         return $this->success(['replyid'=>$reply->id]);
     }
     public function addTicketNote(Request $request)
@@ -82,7 +100,53 @@ class TicketApiController extends BaseApiController
         if (!$ticket) return $this->error('Ticket Not Found', 404);
         return $this->success(['notes'=>\App\Models\TicketNote::where('ticket_id',$ticket->id)->get()->toArray()]);
     }
-    public function getTicketAttachment(Request $request) { return $this->success(['attachments'=>[]]); }
+    /**
+     * The files on a ticket.
+     *
+     * Without attachmentindex the call lists what is there; with it, the file
+     * itself comes back base64 encoded, which is how the WHMCS-compatible
+     * clients expect to read one.
+     */
+    public function getTicketAttachment(Request $request)
+    {
+        $ticket = Ticket::with('replies')->find($request->ticketid);
+        if (! $ticket) {
+            return $this->error('Ticket Not Found', 404);
+        }
+
+        $files = [];
+        if ($ticket->attachment) {
+            $files[] = ['replyid' => null, 'path' => $ticket->attachment];
+        }
+        foreach ($ticket->replies->whereNotNull('attachment') as $reply) {
+            $files[] = ['replyid' => $reply->id, 'path' => $reply->attachment];
+        }
+
+        $listed = [];
+        foreach ($files as $index => $file) {
+            $listed[] = [
+                'index' => $index,
+                'replyid' => $file['replyid'],
+                'filename' => basename($file['path']),
+            ];
+        }
+
+        if (! $request->has('attachmentindex')) {
+            return $this->success(['attachments' => $listed]);
+        }
+
+        $index = (int) $request->attachmentindex;
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+
+        if (! isset($files[$index]) || ! $disk->exists($files[$index]['path'])) {
+            return $this->error('Attachment Not Found', 404);
+        }
+
+        return $this->success([
+            'filename' => basename($files[$index]['path']),
+            'data' => base64_encode($disk->get($files[$index]['path'])),
+        ]);
+    }
     public function updateTicketReply(Request $request)
     {
         $reply = TicketReply::find($request->replyid);

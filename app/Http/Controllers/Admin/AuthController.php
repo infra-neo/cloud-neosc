@@ -35,7 +35,11 @@ class AuthController extends Controller
             ]);
         }
 
-        if (Auth::guard('admin')->attempt($credentials, $request->boolean('remember'))) {
+        // Accept either the username or the email in the same field, so an
+        // administrator can sign in with whichever they remember.
+        $loginField = filter_var($credentials['username'], FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
+        $attemptCredentials = [$loginField => $credentials['username'], 'password' => $credentials['password']];
+        if (Auth::guard('admin')->attempt($attemptCredentials, $request->boolean('remember'))) {
             RateLimiter::clear($key);
             $admin = Auth::guard('admin')->user();
 
@@ -53,6 +57,12 @@ class AuthController extends Controller
 
             // Check 2FA
             if ($admin->second_factor_type && $admin->second_factor_secret) {
+                // Start from unverified: regenerate() above carries the session
+                // DATA across a fresh login, so a leftover admin_2fa_verified
+                // from a re-login over a live session would wave this admin
+                // through without their own second factor. Ordinary logout
+                // invalidates the session; a re-login does not.
+                session()->forget('admin_2fa_verified');
                 session(['admin_2fa_pending' => true]);
                 return redirect()->route('admin.2fa.verify');
             }

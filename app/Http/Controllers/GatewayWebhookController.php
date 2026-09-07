@@ -105,7 +105,7 @@ class GatewayWebhookController extends Controller
             return response()->json(["success" => false, "message" => "Stripe module not available."]);
         }
 
-        $result = $module->capture($invoice, (float) $invoice->total, ["currency" => "usd"]);
+        $result = $module->capture($invoice, $invoice->amountDue(), ["currency" => "usd"]);
         return response()->json($result);
     }
 
@@ -159,10 +159,12 @@ class GatewayWebhookController extends Controller
             return response()->json(["success" => false, "message" => "Missing payment data."]);
         }
 
-        $result = $module->capture($invoice, (float) $invoice->total, ["opaque_data" => $opaqueData]);
+        $due = $invoice->amountDue();
+
+        $result = $module->capture($invoice, $due, ["opaque_data" => $opaqueData]);
 
         if ($result["success"] ?? false) {
-            $this->recordTransaction($invoice, "authorize", $result["transaction_id"], (float) $invoice->total);
+            $this->recordTransaction($invoice, "authorize", $result["transaction_id"], $due);
             $result["redirect_url"] = route("client.invoices.show", $invoice);
         }
 
@@ -258,7 +260,7 @@ class GatewayWebhookController extends Controller
 
         $module = app(\App\Services\Module\ModuleRegistry::class)->getGatewayModule("mollie");
         if (!$module) return response()->json(["success" => false, "message" => "Not configured"]);
-        $result = $module->capture($invoice, (float)$invoice->total, [
+        $result = $module->capture($invoice, $invoice->amountDue(), [
             "redirect_url" => url("/client/invoices/{$invoice->id}?payment=success"),
             "webhook_url" => route("gateway.mollie.webhook"),
         ]);
@@ -285,6 +287,67 @@ class GatewayWebhookController extends Controller
             }
         }
         return response("OK", 200);
+    }
+
+    // ========== Tpay ==========
+
+    public function tpay(Request $request)
+    {
+        $module = $this->registry->getGatewayModule("tpay");
+        if (!$module) {
+            return response("Gateway not found", 404);
+        }
+
+        $data = array_merge($request->all(), [
+            "_raw_payload"      => $request->getContent(),
+            "_signature_header" => $request->header("X-JWS-Signature", ""),
+        ]);
+
+        try {
+            $result = $module->processWebhook($data);
+        } catch (\Throwable $e) {
+            Log::error("Tpay webhook exception: " . $e->getMessage());
+            return response("FALSE", 200);
+        }
+
+        if (!($result["success"] ?? false)) {
+            Log::warning("Tpay webhook returned failure", $result);
+            return response("FALSE", 200);
+        }
+
+        $invoiceId = $result["invoice_id"] ?? null;
+        $txnId     = $result["transaction_id"] ?? null;
+
+        if ($invoiceId && $txnId) {
+            $invoice = \App\Models\Invoice::find($invoiceId);
+            if ($invoice) {
+                $this->recordTransaction($invoice, "tpay", $txnId, (float) ($result["amount"] ?? 0));
+            }
+        }
+
+        return response("TRUE", 200);
+    }
+
+    public function tpayCapture(Request $request, \App\Models\Invoice $invoice)
+    {
+        $this->authoriseInvoice($invoice);
+
+        $module = app(\App\Services\Module\ModuleRegistry::class)->getGatewayModule("tpay");
+        if (!$module) {
+            return response()->json(["success" => false, "message" => "Not configured"]);
+        }
+
+        $result = $module->capture($invoice, $invoice->amountDue(), [
+            "redirect_url" => url("/client/invoices/{$invoice->id}?payment=success"),
+            "cancel_url"   => url("/client/invoices/{$invoice->id}?payment=cancelled"),
+            "webhook_url"  => route("gateway.tpay.webhook"),
+        ]);
+
+        if (($result["redirect"] ?? false) && !empty($result["checkout_url"])) {
+            return redirect($result["checkout_url"]);
+        }
+
+        return response()->json($result);
     }
 
     public function razorpayCapture(Request $request, \App\Models\Invoice $invoice)
@@ -317,7 +380,7 @@ class GatewayWebhookController extends Controller
             return response()->json(["success" => true, "redirect_url" => url("/client/invoices/{$invoice->id}?payment=success")]);
         }
         // Create order
-        $result = $module->capture($invoice, (float)$invoice->total);
+        $result = $module->capture($invoice, $invoice->amountDue());
         return response()->json($result);
     }
 }

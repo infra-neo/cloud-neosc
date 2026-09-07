@@ -46,6 +46,14 @@ return [
         'update_payment' => 'To avoid any service interruptions, please update your payment method in your account area.',
     ],
     'common' => [
+        'view_invoice' => 'View invoice',
+        'pay_invoice' => 'Pay invoice',
+        'view_ticket' => 'View ticket',
+        'view_service' => 'View service',
+        'view_domain' => 'View domain',
+        'update_payment_method' => 'Update payment method',
+        'go_to_account' => 'Go to your account',
+
         'amount_label' => 'Amount',
         'client' => 'Client',
         'customer' => 'Customer',
@@ -144,6 +152,7 @@ return [
     'payment_reminder' => [
         'due_in' => 'This is a friendly reminder that Invoice #:number is due in :days day(s).',
         'overdue' => 'Invoice #:number is now :days day(s) overdue.',
+        'to_pay_intro' => 'You can settle this invoice from your account:',
         'to_pay' => 'to make a payment.',
     ],
     'service' => [
@@ -171,6 +180,17 @@ return [
         'reactivated' => 'Your service has been reactivated.',
     ],
     'service_welcome' => [
+        'access_heading' => 'Your Access Details',
+        'credentials_intro' => 'Sign in with the details below and keep them somewhere safe.',
+        'control_panel' => 'Control Panel',
+        'password_label' => 'Password',
+        'ssh_heading' => 'SSH / SFTP Access',
+        'host_label' => 'Host',
+        'port_note' => 'Your SSH port is shown on your control panel dashboard.',
+        'ssh_type_label' => 'Access type',
+        'ssh_type_sftp' => 'SFTP only (secure file transfer)',
+        'ssh_type_full' => 'SSH shell and SFTP',
+        'nameservers_label' => 'Nameservers',
         'manage_service' => 'You can manage your service from your client area. If you need any assistance, please open a support ticket.',
         'next_due_date' => 'Next Due Date',
         'provisioned' => 'Your service has been provisioned and is now active.',
@@ -196,19 +216,6 @@ return [
         'ssl_certificate' => 'SSL Certificate',
         'thanks' => 'Thanks,',
         'title' => 'SSL Certificate Configuration Required',
-    ],
-    'ssl_config_submitted' => [
-        'body' => 'Your SSL certificate configuration has been submitted to the Certificate Authority for processing.',
-        'configuration_submitted' => 'Configuration Submitted',
-        'dns_validation' => 'Please ensure the DNS CNAME record has been created for your domain.',
-        'email_validation' => 'A validation email will be sent to :email. Please check your inbox and approve the certificate request.',
-        'hello' => 'Hello :name,',
-        'http_validation' => 'Please ensure the HTTP validation file is accessible on your web server.',
-        'notified_when_issued' => 'You will be notified once your certificate has been issued.',
-        'order_details' => 'Order Details:',
-        'thanks' => 'Thanks,',
-        'title' => 'SSL Certificate Configuration Submitted',
-        'validation_method' => 'Validation Method',
     ],
     'ssl_expiring' => [
         'body' => 'Your SSL certificate is expiring in :days day(s).',
@@ -256,5 +263,10 @@ return [
         'reply_from' => 'Reply From',
         'ticket_id' => 'Ticket ID',
         'view_conversation' => 'Log in to your account to view the full conversation and respond.',
+    ],
+    'ksef_issued' => [
+        'subject' => 'e-Invoice (KSeF) - #:number',
+        'body' => 'Your invoice #:number has been issued in KSeF.',
+        'ksef_number' => 'KSeF Number',
     ],
 ];

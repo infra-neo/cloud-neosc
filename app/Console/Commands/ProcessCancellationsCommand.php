@@ -21,11 +21,16 @@ class ProcessCancellationsCommand extends Command
         // waited for the paid period to end, so a customer who asked to stop
         // immediately kept a running service and the choice on the form meant
         // nothing.
+        // Suspended services count too. A customer who wants out should not be
+        // held to a service because they are behind on it - one request here
+        // has been waiting since April for that reason.
         $services = Service::with('server', 'product', 'client', 'cancellationRequest')
-            ->where('status', 'active')
-            ->whereHas('cancellationRequest')
+            ->whereIn('status', ['active', 'suspended'])
+            // Only requests nobody has acted on. Nothing used to close them,
+            // so a service put back to work was cancelled again the next night.
+            ->whereHas('cancellationRequest', fn ($c) => $c->whereNull('processed_at'))
             ->where(function ($q) {
-                $q->whereHas('cancellationRequest', fn ($c) => $c->whereRaw(
+                $q->whereHas('cancellationRequest', fn ($c) => $c->whereNull('processed_at')->whereRaw(
                     "LOWER(REPLACE(REPLACE(type, ' ', '_'), '-', '_')) = ?", ['immediate']
                 ))->orWhere('next_due_date', '<=', now());
             })
@@ -38,6 +43,12 @@ class ProcessCancellationsCommand extends Command
             // Through the provisioning service, which queues a retry when the
             // server cannot be reached and announces what happened. Calling the
             // module here meant a failed termination was logged and forgotten.
+            // Same as the other jobs: what the queue gave up on for good is
+            // not asked again.
+            if ($provisioning->hasGivenUp($service, 'terminate')) {
+                continue;
+            }
+
             if ($service->server_id && $provisioning->resolveModule($service)) {
                 $result = $provisioning->terminateAccount($service);
 
@@ -55,6 +66,18 @@ class ProcessCancellationsCommand extends Command
                 'status' => 'cancelled',
                 'termination_date' => now(),
             ]);
+
+            // r136-openrequest: close the request that is actually open.
+            //
+            // A service can carry more than one over its life - the form allows
+            // a new one once the previous has been acted on - and the relation
+            // is an unordered hasOne, so it handed back the oldest row. The job
+            // stamped that one a second time and left the open request open, so
+            // the moment the service was put back to work it was cancelled
+            // again: the exact thing closing the request was meant to prevent.
+            $service->cancellationRequest()
+                ->whereNull('processed_at')
+                ->update(['processed_at' => now()]);
 
             if ($service->client?->email) {
                 try {

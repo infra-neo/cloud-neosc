@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Models\Client;
 use App\Models\EmailTemplate;
-use App\Models\Setting;
+use App\Models\SslOrder;
 
 /**
  * The email templates screen edits 19 templates with merge fields, a disable
@@ -22,6 +22,9 @@ class EmailTemplateService
      *
      * Deliberately explicit: guessing from the class name would silently attach
      * the wrong template the first time somebody renames one.
+     *
+     * BulkMassMail is deliberately absent: it carries the subject and body the
+     * operator has just written, and a template would overwrite both.
      */
     private const MAP = [
         'AccountSignupMail' => 'Account Signup Email',
@@ -39,6 +42,13 @@ class EmailTemplateService
         'ServiceTerminationMail' => 'Service Termination',
         'ServiceUnsuspensionMail' => 'Service Unsuspension',
         'ServiceWelcomeMail' => 'Service Welcome Email',
+        'CreditCardExpiryMail' => 'Credit Card Expiry Notice',
+        'LoginEmailChangedMail' => 'Login Email Changed',
+        'PaymentNotificationRejectedMail' => 'Payment Notification Rejected',
+        'SslCertificateExpiringMail' => 'SSL Certificate Expiring',
+        'SslCertificateIssuedMail' => 'SSL Certificate Issued',
+        'ContainerAccessDetailsMail' => 'App Connection Details',
+        'SslConfigurationRequiredMail' => 'SSL Configuration Required',
         'TicketOpenedMail' => 'Support Ticket Opened',
         'TicketReplyMail' => 'Support Ticket Reply',
     ];
@@ -46,8 +56,12 @@ class EmailTemplateService
     /**
      * The mailable arrives as a class name: Laravel puts the string, not the
      * instance, into the event data under __laravel_mailable.
+     *
+     * Templates are stored per language; the copy for the recipient's language
+     * is preferred, falling back to English (the canonical set) when a language
+     * has no row or no translation yet.
      */
-    public function forMailable(object|string $mailable): ?EmailTemplate
+    public function forMailable(object|string $mailable, ?string $locale = null): ?EmailTemplate
     {
         $short = class_basename($mailable);
 
@@ -55,8 +69,21 @@ class EmailTemplateService
             return null;
         }
 
+        $name = self::MAP[$short];
+
         try {
-            return EmailTemplate::where('name', self::MAP[$short])->first();
+            $query = EmailTemplate::where('name', $name);
+
+            if ($locale !== null && $locale !== '' && $locale !== 'en') {
+                $template = (clone $query)->where('language', $locale)->first();
+                if (! $template) {
+                    $template = (clone $query)->where('language', 'en')->first();
+                }
+
+                return $template;
+            }
+
+            return $query->where('language', 'en')->first();
         } catch (\Throwable) {
             // Templates unreadable (installer, broken database) — never let this
             // stand between a customer and their email.
@@ -106,6 +133,25 @@ class EmailTemplateService
     {
         $vars = ['CompanyName' => $this->companyName()];
 
+        // The connection-details email carries no model at all: an app name,
+        // a link, and label => value pairs. Flattened here so a template can
+        // say {app_name}, {app_url} and {app_details}.
+        if (isset($data['appName']) && is_string($data['appName'])) {
+            $vars['app_name'] = $data['appName'];
+        }
+        if (! empty($data['accessUrl']) && is_string($data['accessUrl'])) {
+            $vars['app_url'] = $data['accessUrl'];
+        }
+        if (isset($data['items']) && is_array($data['items']) && $data['items'] !== []) {
+            $lines = [];
+            foreach ($data['items'] as $label => $value) {
+                if (is_scalar($value)) {
+                    $lines[] = $label.': '.$value;
+                }
+            }
+            $vars['app_details'] = implode("\n", $lines);
+        }
+
         $client = null;
 
         foreach (['invoice', 'service', 'order', 'domain', 'ticket', 'client'] as $property) {
@@ -123,14 +169,28 @@ class EmailTemplateService
                 ],
                 'service' => $vars += [
                     'service_domain' => $model->domain ?? '',
+                    // The credentials the module wrote onto the service when the
+                    // account was built. cPanel and Plesk welcome mail carries
+                    // them too; a welcome mail without them tells the customer a
+                    // service exists that they cannot open.
+                    'service_username' => $model->username ?? '',
+                    'service_password' => (string) ($model->password ?? ''),
                     'service_product' => $model->product->name ?? '',
                     // The templates say {product_name}.
                     'product_name' => $model->product->name ?? '',
                 ],
-                'order' => $vars += [
-                    'order_num' => $model->order_num ?? $model->id,
-                    'order_total' => number_format((float) $model->amount, 2),
-                ],
+                // An SSL order is not a shop order: it has no order number and
+                // no total, and reading those off it would put "#" and "0.00"
+                // into the customer's subject line.
+                'order' => $vars += $model instanceof SslOrder
+                    ? [
+                        'ssl_domain' => $model->domain ?: 'Order #'.$model->id,
+                        'ssl_status' => (string) ($model->status ?? ''),
+                    ]
+                    : [
+                        'order_num' => $model->order_num ?? $model->id,
+                        'order_total' => number_format((float) $model->amount, 2),
+                    ],
                 'domain' => $vars += [
                     'domain_name' => $model->domain ?? '',
                     // The templates say {domain}, and every domain email went
@@ -153,6 +213,17 @@ class EmailTemplateService
             $client ??= $model->client ?? ($property === 'client' ? $model : null);
         }
 
+        // Nothing the password reset carries is a model - it is a link and an
+        // address - so the customer asking for their account back was greeted
+        // as "{client_name}". The address it is going to identifies them.
+        if (! $client && is_string($data['email'] ?? null) && $data['email'] !== '') {
+            try {
+                $client = Client::where('email', $data['email'])->first();
+            } catch (\Throwable) {
+                $client = null;
+            }
+        }
+
         if ($client) {
             $vars['client_name'] = trim(($client->first_name ?? '').' '.($client->last_name ?? ''));
             $vars['client_email'] = $client->email ?? '';
@@ -169,9 +240,20 @@ class EmailTemplateService
             'resetUrl' => 'reset_url',
             'replyMessage' => 'ticket_reply',
             'reason' => 'suspend_reason',
+            // The address change warning is about two addresses and carries
+            // nothing else; the counts below are what their subjects are made
+            // of - "expiring in 14 days" reads as "expiring in {} days"
+            // without them.
+            'previousEmail' => 'previous_email',
+            'newEmail' => 'new_email',
+            'daysRemaining' => 'days_remaining',
+            'daysOverdue' => 'days_overdue',
+            'daysUntilExpiry' => 'days_until_expiry',
         ] as $property => $name) {
-            if (is_string($data[$property] ?? null) && $data[$property] !== '') {
-                $vars[$name] = $data[$property];
+            $value = $data[$property] ?? null;
+
+            if (is_scalar($value) && ! is_bool($value) && (string) $value !== '') {
+                $vars[$name] = (string) $value;
             }
         }
 
@@ -186,7 +268,7 @@ class EmailTemplateService
     private function companyName(): string
     {
         try {
-            return (string) (Setting::get('whitelabel_company_name') ?: config('app.name', 'PNLCS'));
+            return company_name();
         } catch (\Throwable) {
             return (string) config('app.name', 'PNLCS');
         }

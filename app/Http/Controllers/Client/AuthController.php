@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Client;
 
+use App\Enums\ClientStatus;
 use App\Events\ClientCreated;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\AffiliateTracking;
@@ -52,6 +53,32 @@ class AuthController extends Controller
             $request->session()->regenerate();
 
             $user = Auth::user();
+
+            // A closed account is finished. Nothing read the status the admin
+            // screen sets, so a customer whose account had been closed could
+            // still sign in and carry on.
+            if ($user->clients()->exists() && ! $user->clients()->where('status', '!=', ClientStatus::Closed->value)->exists()) {
+                Auth::logout();
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+
+                return back()->withErrors(['email' => __('auth.account_closed')])->onlyInput('email');
+            }
+
+            // Whatever the visitor put in the cart before logging in changes
+            // hands here. The cart id lives in the session DATA, which
+            // regenerate() carries across - keyed by the session id it used
+            // to evaporate at this exact line.
+            $guestCartId = session('guest_cart_id');
+            if ($guestCartId) {
+                $client = $user->clients()->first();
+                if ($client) {
+                    \App\Models\Cart::whereKey($guestCartId)->whereNull('user_id')
+                        ->update(['user_id' => $client->id]);
+                    session()->forget('guest_cart_id');
+                }
+            }
+
             $user->forceFill([
                 'last_login' => now(),
                 'last_login_ip' => $request->ip(),
@@ -59,6 +86,11 @@ class AuthController extends Controller
 
             // Check 2FA
             if ($user->second_factor_type && $user->second_factor_secret) {
+                // Start from unverified every time: 2fa_verified is a plain
+                // session key that regenerate() carries across a fresh login,
+                // and impersonation sets it deliberately. A stale one here
+                // would wave a real 2FA login straight through.
+                session()->forget('2fa_verified');
                 session(['2fa_pending' => true]);
 
                 return redirect()->route('client.2fa.verify');
@@ -202,34 +234,8 @@ class AuthController extends Controller
                 ->onlyInput('email');
         }
 
-        $user = User::create([
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-        ]);
-
-        $client = Client::create([
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'email' => $validated['email'],
-            'company_name' => $validated['company_name'] ?? null,
-            'address1' => $validated['address1'] ?? null,
-            'city' => $validated['city'] ?? null,
-            'country' => $validated['country'] ?? 'US',
-            'phone_number' => $validated['phone_number'] ?? null,
-        ]);
-        $client->users()->attach($user->id, ['owner' => true]);
-
-        // Convert the referral cookie dropped by AffiliateTracking into a real
-        // link. Nothing used to read this cookie, so no referral was ever
-        // attributed and no commission was ever paid.
-        $referralId = $request->cookie(AffiliateTracking::COOKIE);
-        if ($referralId) {
-            app(AffiliateService::class)->linkClientToAffiliate($client, (int) $referralId);
-        }
-
-        event(new ClientCreated($client));
+        // Checkout opens accounts too now; one implementation for both doors.
+        [$user] = app(\App\Services\ClientRegistrationService::class)->register($validated, $request);
 
         Auth::login($user);
 
@@ -302,6 +308,11 @@ class AuthController extends Controller
             return back()->withErrors(['email' => __('auth.user_not_found')]);
         }
         $user->password = Hash::make($request->password);
+
+        // Resetting a password is what somebody does when they think another
+        // person is in their account. Any "remember me" cookie already handed
+        // out has to stop working, or the reset changes nothing for them.
+        $user->setRememberToken(Str::random(60));
         $user->save();
         DB::table('password_reset_tokens')->where('email', $request->email)->delete();
 

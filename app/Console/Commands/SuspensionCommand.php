@@ -2,9 +2,9 @@
 
 namespace App\Console\Commands;
 
-use App\Enums\InvoiceStatus;
 use App\Enums\ServiceStatus;
 use App\Models\Service;
+use App\Models\Setting;
 use App\Services\ProvisioningService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -15,18 +15,33 @@ class SuspensionCommand extends Command
 
     protected $description = 'Auto-suspend services with overdue invoices';
 
-    /** Grace period, in days, after an invoice becomes overdue. */
-    private const GRACE_DAYS = 3;
+    /**
+     * Grace period, in days, after an invoice becomes overdue.
+     *
+     * Public because unsuspend-on-payment asks the same question with it: a
+     * service must not be switched back on over a debt that will suspend it
+     * again the next morning.
+     */
+    public static function graceDays(): int
+    {
+        return max(0, (int) Setting::get('AutoSuspensionDays', 3));
+    }
 
     public function handle(ProvisioningService $provisioning): int
     {
         $services = Service::with(['client.group', 'server', 'product'])
             ->where('status', ServiceStatus::Active->value)
-            ->whereNull('override_auto_suspend_date')
+            // r135-hold: "do not suspend until" is a date, not a switch. This
+            // used to pass over any service carrying a date at all, so a hold
+            // put on until the end of the month went on protecting the account
+            // for ever and the customer could stop paying with nothing
+            // happening. A hold that has run out no longer holds; one that ends
+            // today still does.
+            ->where(fn ($q) => $q
+                ->whereNull('override_auto_suspend_date')
+                ->orWhereDate('override_auto_suspend_date', '<', today()))
             ->whereHas('client', function ($q) {
-                $q->whereHas('invoices', fn ($iq) => $iq
-                    ->where('status', InvoiceStatus::Overdue->value)
-                    ->where('due_date', '<', now()->subDays(self::GRACE_DAYS)));
+                $q->whereHas('invoices', fn ($iq) => $iq->overduePastGrace(self::graceDays()));
             })
             ->get();
 
@@ -35,6 +50,14 @@ class SuspensionCommand extends Command
         $failed = 0;
 
         foreach ($services as $service) {
+            // The queue has already worked out that some of these cannot come
+            // right; asking again only writes the same refusal to the log.
+            if ($provisioning->hasGivenUp($service, 'suspend')) {
+                $failed++;
+
+                continue;
+            }
+
             if ($this->isExempt($service)) {
                 $exempt++;
 
@@ -50,7 +73,10 @@ class SuspensionCommand extends Command
             // A service backed by a server module must be suspended ON THE
             // SERVER — flipping the local status alone used to leave the
             // hosting account fully live while the panel claimed otherwise.
-            if ($provisioning->resolveModule($service)) {
+            // The server itself is the test, not the module: a product can name
+            // a module while this service was never put on a server, and the
+            // module would then pick one by itself and stamp it on the service.
+            if ($service->server_id && $provisioning->resolveModule($service)) {
                 $result = $provisioning->suspendAccount($service, 'Overdue Invoice - Automatic Suspension');
                 if ($result['success'] ?? false) {
                     $suspended++;

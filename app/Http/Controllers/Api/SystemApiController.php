@@ -26,6 +26,7 @@ use App\Models\Setting;
 use App\Models\Ticket;
 use App\Models\TodoItem;
 use App\Models\User;
+use App\Services\QuoteService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -115,7 +116,11 @@ class SystemApiController extends BaseApiController
         return $this->success([
             'pnlcs' => [
                 'version' => '1.0.0',
-                'company_name' => Setting::get('CompanyName', 'PNLCS'),
+                // The same resolver the panel, the invoices and the emails
+                // use: white-label override first, then the general setting.
+                // Reading the raw key made the API report a different company
+                // name from every screen whenever the override was set.
+                'company_name' => company_name(),
             ],
         ]);
     }
@@ -164,17 +169,53 @@ class SystemApiController extends BaseApiController
 
     public function getConfigurationValue(Request $request)
     {
-        $value = Setting::get($request->setting);
+        $validated = $request->validate(['setting' => 'required|string']);
 
-        return $this->success(['setting' => $request->setting, 'value' => $value]);
+        if (self::isSecretSetting($validated['setting'])) {
+            return $this->error('That setting holds a credential and is not readable through the API.', 403);
+        }
+
+        return $this->success([
+            'setting' => $validated['setting'],
+            'value' => Setting::get($validated['setting']),
+        ]);
     }
 
     public function setConfigurationValue(Request $request)
     {
         $validated = $request->validate(['setting' => 'required|string', 'value' => 'required|string']);
-        Setting::set($validated['setting'], $validated['value']);
+
+        if (self::isSecretSetting($validated['setting'])) {
+            return $this->error('That setting holds a credential and is not writable through the API.', 403);
+        }
+
+        // Keep it where its screen looks for it. Setting::set() writes the
+        // group as well as the value and defaults to "general", so naming a
+        // setting belonging to another screen used to move it out from under
+        // that screen - the mistake the settings form was hardened against,
+        // left open at this door.
+        $group = Setting::where('setting', $validated['setting'])->value('group') ?? 'general';
+
+        Setting::set($validated['setting'], $validated['value'], $group);
 
         return $this->success();
+    }
+
+    /**
+     * Settings that hold a credential.
+     *
+     * The settings table keeps the mail password in plain text, put there by
+     * the settings screen. Reading it back needed nothing more than read
+     * access to the API, which is not the same thing as being trusted with the
+     * mail account.
+     */
+    private static function isSecretSetting(string $setting): bool
+    {
+        // "key" on its own, not only "api_key": the credential settings are
+        // named MaxMindLicenseKey and the like, which the narrower pattern let
+        // through in the clear. A Twilio *service* SID and account SID identify
+        // an account well enough to pair with a leaked token, so SID counts too.
+        return (bool) preg_match('/(password|secret|token|key|access_?hash|credential|sid)/i', $setting);
     }
 
     public function getAnnouncements(Request $request)
@@ -408,18 +449,24 @@ class SystemApiController extends BaseApiController
     }
 
     // ===== ENCRYPTION =====
+    /**
+     * These two ran the application key for whoever asked.
+     *
+     * Nothing in the application has ever called them, and decryptpassword
+     * cannot read what is stored here today - the secrets in the database are
+     * written with encryptString, which it does not understand. But it was a
+     * standing offer to decrypt anything arriving in the form it does
+     * understand, made to anybody holding an API credential, and the key it
+     * used is the same key the database is protected with.
+     */
     public function encryptPassword(Request $request)
     {
-        return $this->success(['password' => encrypt($request->password2 ?? '')]);
+        return $this->error('This installation no longer offers encryption through the API.', 501);
     }
 
     public function decryptPassword(Request $request)
     {
-        try {
-            return $this->success(['password' => decrypt($request->password2 ?? '')]);
-        } catch (\Exception $e) {
-            return $this->error('Decryption failed');
-        }
+        return $this->error('This installation no longer offers decryption through the API.', 501);
     }
 
     // ===== ADMIN NOTES =====
@@ -436,25 +483,34 @@ class SystemApiController extends BaseApiController
     }
 
     // ===== EMAIL =====
+    /**
+     * Said the mail had been queued and queued nothing. Mail is sent by the
+     * things that have something to say - an invoice, a ticket reply - and
+     * there is no code here to send one to order.
+     */
     public function sendEmail(Request $request)
     {
-        return $this->success(['message' => 'Email queued']);
+        return $this->error('Sending mail from the API is not implemented.', 501);
     }
 
+    /**
+     * Said a reset mail had been sent and sent nothing. The customer area
+     * sends them; there is no code here to do it.
+     */
     public function resetPassword(Request $request)
     {
-        return $this->success(['message' => 'Password reset email sent']);
+        return $this->error('Sending a password reset from the API is not implemented.', 501);
     }
 
     // ===== MODULE ACTIVATION =====
     public function activateModule(Request $request)
     {
-        return $this->success(['message' => 'Module activated']);
+        return $this->error('Activating a module from the API is not implemented.', 501);
     }
 
     public function deactivateModule(Request $request)
     {
-        return $this->success(['message' => 'Module deactivated']);
+        return $this->error('Deactivating a module from the API is not implemented.', 501);
     }
 
     // ===== QUOTES =====
@@ -477,13 +533,21 @@ class SystemApiController extends BaseApiController
         $validated = $request->validate(['clientid' => 'required|exists:clients,id', 'valid_until' => 'nullable|date']);
         $quote = Quote::create(['client_id' => $validated['clientid'], 'date' => now()->format('Y-m-d'), 'valid_until' => $validated['valid_until'] ?? now()->addDays(30)->format('Y-m-d'), 'subject' => $request->get('subject', 'Quote'), 'status' => 'draft', 'subtotal' => 0, 'tax' => 0, 'total' => 0]);
         if ($request->has('items')) {
-            $total = 0;
             foreach ((array) $request->items as $item) {
-                $amount = (float) ($item['amount'] ?? 0);
-                $quote->items()->create(['description' => $item['description'] ?? '', 'amount' => $amount, 'quantity' => (int) ($item['quantity'] ?? 1), 'taxed' => ($item['taxed'] ?? false)]);
-                $total += $amount * (int) ($item['quantity'] ?? 1);
+                // Through the same service the panel uses, so the columns are
+                // named once. "amount" and "taxed" are the words this endpoint
+                // has always taken from callers; the table calls them
+                // unit_price and taxable.
+                app(QuoteService::class)->addItem($quote, [
+                    'description' => $item['description'] ?? '',
+                    'quantity' => (int) ($item['quantity'] ?? 1),
+                    'unit_price' => (float) ($item['unit_price'] ?? $item['amount'] ?? 0),
+                    'discount' => (float) ($item['discount'] ?? 0),
+                    'taxable' => (bool) ($item['taxable'] ?? $item['taxed'] ?? false),
+                ]);
             }
-            $quote->update(['subtotal' => $total, 'total' => $total]);
+
+            $quote->refresh();
         }
 
         return $this->success(['quoteid' => $quote->id]);
@@ -517,26 +581,46 @@ class SystemApiController extends BaseApiController
         return $this->success();
     }
 
-    public function sendQuote(Request $request)
+    /**
+     * Both of these wrote the status themselves, in lower case, while the rest
+     * of the application writes and reads it capitalised and the customer area
+     * compares it exactly. A quote sent this way was missing from the
+     * customer's list, 404 on its own page and impossible to accept.
+     */
+    public function sendQuote(Request $request, QuoteService $quotes)
     {
         $quote = Quote::find($request->quoteid);
         if (! $quote) {
             return $this->error('Quote Not Found', 404);
         }
-        $quote->update(['status' => 'sent']);
 
-        return $this->success(['quoteid' => $quote->id]);
+        $quote = $quotes->sendQuote($quote);
+
+        return $this->success(['quoteid' => $quote->id, 'status' => $quote->status]);
     }
 
-    public function acceptQuote(Request $request)
+    /**
+     * Accepting also has to leave the invoice the customer is meant to pay -
+     * the customer's own accept button has always done that, this one did not.
+     */
+    public function acceptQuote(Request $request, QuoteService $quotes)
     {
         $quote = Quote::find($request->quoteid);
         if (! $quote) {
             return $this->error('Quote Not Found', 404);
         }
-        $quote->update(['status' => 'accepted']);
 
-        return $this->success(['quoteid' => $quote->id]);
+        if (strtolower((string) $quote->status) === 'accepted') {
+            return $this->success(['quoteid' => $quote->id, 'status' => $quote->status]);
+        }
+
+        $invoice = $quotes->convertToInvoice($quote);
+
+        return $this->success([
+            'quoteid' => $quote->id,
+            'status' => $quote->fresh()->status,
+            'invoiceid' => $invoice->id,
+        ]);
     }
 
     // ===== PROJECTS =====

@@ -2,24 +2,43 @@
 
 namespace App\Http\Controllers\Client;
 
-use App\Http\Controllers\Controller;
+use App\Enums\ClientStatus;
 use App\Http\Controllers\Concerns\ResolvesClient;
+use App\Http\Controllers\Controller;
 use App\Models\Currency;
+use App\Models\Domain;
 use App\Models\GatewaySettings;
 use App\Models\Product;
 use App\Models\ProductGroup;
 use App\Services\AddonService;
 use App\Services\CartService;
 use App\Services\ConfigOptionService;
+use App\Models\DockerApp;
+use App\Models\Server;
 use App\Services\Module\ModuleRegistry;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class CartController extends Controller
 {
     use ResolvesClient;
 
     public function __construct(private CartService $cartService) {}
+
+
+    /**
+     * The client when there is one, null for a visitor. The cart has always
+     * been able to belong to a bare session; these pages now let it.
+     */
+    private function optionalClientId(): ?int
+    {
+        if (! auth()->check()) {
+            return null;
+        }
+
+        return $this->getClientId() ?: null;
+    }
 
     public function store()
     {
@@ -46,12 +65,16 @@ class CartController extends Controller
         $optionGroups = app(ConfigOptionService::class)->groupsFor($product);
         $addons = app(AddonService::class)->availableFor($product);
 
-        return view('client.cart.configure', compact('product', 'cycles', 'currency', 'optionGroups', 'addons'));
+        // Products that sell "pick your app" show the catalogue on the order
+        // form; every other product is unaffected and pays for nothing.
+        $apps = $this->productLetsCustomerPickApp($product) ? $this->sellableApps($product) : [];
+
+        return view('client.cart.configure', compact('product', 'cycles', 'currency', 'optionGroups', 'addons', 'apps'));
     }
 
     public function index()
     {
-        $clientId = $this->getClientId();
+        $clientId = $this->optionalClientId();
         $cart = $this->cartService->getOrCreateCart($clientId);
         $totals = $this->cartService->calculateTotal($cart);
         $currency = Currency::getDefault();
@@ -70,21 +93,44 @@ class CartController extends Controller
             'config_options' => 'nullable|array',
             'addons' => 'nullable|array',
             'addons.*' => 'integer',
+            'app_slug' => 'nullable|string|max:100',
         ]);
 
         $product = Product::findOrFail($request->product_id);
-        $clientId = $this->getClientId();
+
+        // What the customer buys is the hosting - memory, CPU, disk. Picking an
+        // app to start with is a convenience, not the product, so an order with
+        // no app is a perfectly good order: the account is opened and they
+        // install what they like from the Apps tab afterwards.
+        //
+        // If they did pick one, it has to be an app we actually offer: the form
+        // is built from that list, but the request is not the form.
+        $appSlug = null;
+        if ($this->productLetsCustomerPickApp($product)) {
+            $chosen = trim((string) $request->input('app_slug'));
+            if ($chosen !== '') {
+                $offered = collect($this->sellableApps($product))->pluck('slug')->all();
+                if ($offered !== [] && ! in_array($chosen, $offered, true)) {
+                    throw ValidationException::withMessages(['app_slug' => __('client.cart.app_not_available')]);
+                }
+                $appSlug = $chosen;
+            }
+        }
+        $clientId = $this->optionalClientId();
         $cart = $this->cartService->getOrCreateCart($clientId);
 
         $this->cartService->addProduct(
             $cart,
             $product,
             $request->billing_cycle,
-            $request->domain,
+            // The same reading the search box gives it: a customer pastes an
+            // address, and it used to be stored exactly as pasted.
+            Domain::normalise($request->domain) ?: null,
             $request->input('config_options', []),
             $request->input('notes'),
             $request->input('domain_option'),
-            $request->input('addons', [])
+            $request->input('addons', []),
+            $appSlug
         );
 
         return redirect()->route('client.cart.index')
@@ -100,15 +146,17 @@ class CartController extends Controller
             'domain' => 'required|string|max:253',
             'type' => 'required|string|in:register,transfer',
             'years' => 'integer|min:1|max:10',
+            'epp_code' => 'required_if:type,transfer|nullable|string|max:255',
         ]);
 
-        $domain = strtolower(trim($request->domain));
+        $domain = Domain::normalise($request->domain);
         $type = $request->type;
         $years = (int) ($request->years ?? 1);
-        $clientId = $this->getClientId();
+        $eppCode = $request->input('epp_code');
+        $clientId = $this->optionalClientId();
         $cart = $this->cartService->getOrCreateCart($clientId);
 
-        $updatedCart = $this->cartService->addDomain($cart, $domain, $type, $years);
+        $updatedCart = $this->cartService->addDomain($cart, $domain, $type, $years, $eppCode);
 
         if ($request->expectsJson()) {
             return response()->json(['success' => true, 'message' => __('messages.success.domain_added_to_cart', ['type' => ucfirst($type), 'domain' => $domain])]);
@@ -120,7 +168,7 @@ class CartController extends Controller
 
     public function removeItem(Request $request, int $index)
     {
-        $clientId = $this->getClientId();
+        $clientId = $this->optionalClientId();
         $cart = $this->cartService->getOrCreateCart($clientId);
         $this->cartService->removeItem($cart, $index);
 
@@ -132,7 +180,7 @@ class CartController extends Controller
     {
         $request->validate(['code' => 'required|string|max:50']);
 
-        $clientId = $this->getClientId();
+        $clientId = $this->optionalClientId();
         $cart = $this->cartService->getOrCreateCart($clientId);
         $result = $this->cartService->applyPromoCode($cart, $request->code);
 
@@ -147,7 +195,23 @@ class CartController extends Controller
 
     public function checkout()
     {
-        $clientId = $this->getClientId();
+        $clientId = $this->optionalClientId();
+        $client = $this->currentClient();
+
+        // Closing or suspending an account should stop new business; the
+        // status was set on the admin screen and read by nothing. A visitor
+        // has no account yet - they open one on this very page.
+        if ($clientId && (! $client || $client->status !== ClientStatus::Active)) {
+            return back()->withErrors(['payment_method' => __('client.cart.account_not_active')]);
+        }
+
+        if (! $clientId) {
+            // A guest who chooses "sign in" instead of the inline form should
+            // land back here, cart intact - not on the dashboard wondering
+            // where their order went.
+            redirect()->setIntendedUrl(route('client.cart.checkout'));
+        }
+
         $cart = $this->cartService->getOrCreateCart($clientId);
         $totals = $this->cartService->calculateTotal($cart);
 
@@ -172,11 +236,47 @@ class CartController extends Controller
             'terms' => 'accepted',
         ]);
 
-        $clientId = $this->getClientId();
+        $clientId = $this->optionalClientId();
 
         if (! $clientId) {
-            return redirect()->route('client.login')
-                ->with('error', __('messages.error.login_required'));
+            // The account is opened here, on the payment step - the one moment
+            // the visitor is committed. Same rules as the register page, same
+            // service creating the same records; the cart is remembered BEFORE
+            // login rotates the session id it is keyed by, or it would
+            // evaporate at the exact moment it was being paid for.
+            $account = $request->validate([
+                'first_name' => 'required|string|max:255',
+                'last_name' => 'required|string|max:255',
+                'email' => 'required|email|unique:users,email',
+                'password' => 'required|string|min:8|confirmed',
+            ]);
+
+            if (\App\Models\BannedEmail::blocks($account['email'])) {
+                return back()->withErrors(['email' => __('auth.email_not_accepted')])->withInput();
+            }
+
+            $guestCart = $this->cartService->getOrCreateCart(null);
+
+            [$user, $newClient] = app(\App\Services\ClientRegistrationService::class)
+                ->register($account, $request);
+
+            $guestCart->update(['user_id' => $newClient->id]);
+
+            auth()->login($user);
+            $request->session()->regenerate();
+            session()->forget('guest_cart_id');
+            session(['active_client_id' => $newClient->id]);
+
+            $clientId = $newClient->id;
+            $client = $newClient;
+        } else {
+            $client = $this->currentClient();
+        }
+
+        // Closing or suspending an account should stop new business; the
+        // status was set on the admin screen and read by nothing.
+        if (! $client || $client->status !== ClientStatus::Active) {
+            return back()->withErrors(['payment_method' => __('client.cart.account_not_active')]);
         }
 
         $cart = $this->cartService->getOrCreateCart($clientId);
@@ -204,18 +304,54 @@ class CartController extends Controller
     {
         $registry = app(ModuleRegistry::class);
 
-        $active = GatewaySettings::where('setting', 'active')
-            ->get()
-            ->filter(fn ($row) => (string) $row->value === '1')
-            ->pluck('gateway')
-            ->unique();
+        // Switched on is not the same as ready: a gateway missing the keys it
+        // authenticates with fails at the last step, after the order is placed.
+        $active = collect($registry->usableGateways());
 
         if ($active->isEmpty()) {
             return ['banktransfer' => __('messages.payment_method.bank_transfer')];
         }
 
         return $active->mapWithKeys(fn (string $name) => [
-            $name => $registry->getGatewayModule($name)?->getModuleName() ?? ucfirst($name),
+            $name => payment_method_label($name),
         ])->all();
+    }
+
+    /** Whether this product asks the customer which app to install. */
+    private function productLetsCustomerPickApp(Product $product): bool
+    {
+        $config = is_string($product->config_options)
+            ? json_decode($product->config_options, true)
+            : ($product->config_options ?? []);
+
+        return ! empty($config['panelica_app_choose']);
+    }
+
+    /**
+     * The apps this product may be ordered with.
+     *
+     * The panel says what exists; we say what is on the shelf. Anything that
+     * goes wrong answers with an empty list, and the order form then says the
+     * catalogue is unavailable rather than offering a choice that cannot be
+     * delivered.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function sellableApps(Product $product): array
+    {
+        $server = Server::where('type', $product->server_type ?: 'panelica')->where('active', true)->first();
+        if (! $server) {
+            return [];
+        }
+        try {
+            $module = app(ModuleRegistry::class)->getServerModule($server->type);
+            if (! $module || ! method_exists($module, 'appTemplates')) {
+                return [];
+            }
+
+            return DockerApp::decorate($module->appTemplates($server), sellableOnly: true);
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 }

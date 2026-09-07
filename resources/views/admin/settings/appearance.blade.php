@@ -371,6 +371,10 @@
             <p style="margin-bottom:16px; color:#666; font-size:13px;">{{ __('admin.appearance.whitelabel_description') }}</p>
             <form action="{{ route('admin.settings.appearance.whitelabel') }}" method="POST">
                 @csrf
+                {{-- Tells the handler this is the whole form, so the unticked
+                     "remove branding" box is honoured rather than ignored. --}}
+                <input type="hidden" name="whitelabel_full_form" value="1">
+                <input type="hidden" name="return_tab" value="whitelabel">
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
                     <div>
                         <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">{{ __('common.form.company_name') }}</label>
@@ -446,11 +450,28 @@
 <script>
 // Tab switching
 function switchTab(tabName, btn) {
+    const pane = document.getElementById('tab-' + tabName);
+    if (!pane) { return; }
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.appearance-tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.add('active');
-    btn.classList.add('active');
+    pane.classList.add('active');
+    (btn || document.querySelector('.appearance-tab[data-tab="' + tabName + '"]')).classList.add('active');
+
+    // Put the tab in the address bar so the screen can be linked to and so a
+    // reload does not throw the operator back to the first tab.
+    if (history.replaceState) {
+        history.replaceState(null, '', '#' + tabName);
+    }
 }
+
+// Open the tab the link, the redirect or a reload asked for. The setup
+// checklist links straight at the field that is still missing; landing on the
+// default tab instead is how someone ends up hunting for "company name".
+document.addEventListener('DOMContentLoaded', function () {
+    const wanted = (window.location.hash || '').replace('#', '')
+        || @json(session('appearance_tab', ''));
+    if (wanted) { switchTab(wanted, null); }
+});
 
 // SortableJS for section reorder
 document.addEventListener('DOMContentLoaded', function() {

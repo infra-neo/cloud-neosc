@@ -9,16 +9,19 @@ use App\Enums\ServiceStatus;
 use App\Events\OrderPlaced;
 use App\Models\Client;
 use App\Models\Domain;
+use App\Models\DomainPricing;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\Promotion;
 use App\Models\Service;
 use App\Models\ServiceAddon;
 use App\Models\SslOrder;
+use App\Services\Module\ModuleRegistry;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Carbon\Carbon;
 
 class OrderService
 {
@@ -79,6 +82,17 @@ class OrderService
                 } else {
                     $product = Product::find($item['product_id'] ?? null);
 
+                    // A hidden plan is a draft nobody meant to sell and a
+                    // retired one is a plan the operator has stopped selling.
+                    // The cart refuses both; this is the other door, and the
+                    // order endpoint hands it product ids straight from the
+                    // request.
+                    if ($product && ($product->hidden || $product->retired)) {
+                        throw ValidationException::withMessages([
+                            'product_id' => __('client.cart.product_unavailable'),
+                        ]);
+                    }
+
                     // Guarded at the database, not in PHP: two customers can be
                     // buying the last one at the same moment.
                     if ($product && $product->stock_control) {
@@ -94,6 +108,17 @@ class OrderService
                     }
 
                     $service = $this->createServiceForOrder($order, $client, $item);
+
+                    // The app the customer chose while ordering. Recorded on the
+                    // service because that is what provisioning reads - the cart
+                    // is gone by the time the account is built.
+                    if (! empty($item['app_slug'])) {
+                        $data = is_string($service->module_data)
+                            ? (json_decode($service->module_data, true) ?: [])
+                            : ((array) $service->module_data);
+                        $data['panelica_app_template'] = (string) $item['app_slug'];
+                        $service->update(['module_data' => $data]);
+                    }
 
                     // Configurable options are already inside the service price;
                     // recording them is what lets the panel and the server
@@ -122,7 +147,13 @@ class OrderService
                         'rel_id' => $service->id,
                         'description' => $this->buildServiceDescription($service, $item),
                         'amount' => (float) ($item['amount'] ?? $service->amount),
-                        'taxed' => true,
+                        // r146-taxflag: ask the product, as everything else
+                        // does. This said true whatever the product carried, so
+                        // one marked not taxable was taxed on the invoice the
+                        // customer pays at sign-up and never again on a
+                        // renewal - the generator, the upgrade charge and the
+                        // addon line have always read the product's own flag.
+                        'taxed' => (bool) ($product->tax ?? true),
                     ];
                 }
             }
@@ -155,7 +186,11 @@ class OrderService
 
             if (($fraud['score'] ?? 0) >= 60) {
                 Log::warning('Order #'.$order->order_num.' held as fraud', ['reasons' => $fraud['reasons'] ?? []]);
-                $order = $this->markFraud($order);
+                $order = $this->markFraud(
+                    $order,
+                    $fraud['module'] ?? 'internal',
+                    'Held by fraud screening (score '.$fraud['score'].'): '.implode('; ', $fraud['reasons'] ?? [])
+                );
 
                 return $order->fresh();
             }
@@ -267,7 +302,19 @@ class OrderService
                     Log::error('Auto-provision failed for service #'.$svc->id.': '.($result['message'] ?? 'unknown'));
                 }
             } else {
-                // No server module involved — plain activation.
+                // No server module involved — plain activation. Legitimate for
+                // a product that is not hosted anywhere; for one that is, this
+                // is the whole order quietly doing nothing, so say so.
+                if (in_array((string) $svc->product?->type, ['hosting', 'reseller', 'vps'], true)) {
+                    Log::warning('Service activated with no server module: nothing was created on any server', [
+                        'service_id' => $svc->id,
+                        'product_id' => $svc->product?->id,
+                        'product' => $svc->product?->name,
+                        'product_type' => $svc->product?->type,
+                        'hint' => 'Set the product\'s server module.',
+                    ]);
+                }
+
                 $svc->update([
                     'status' => ServiceStatus::Active->value,
                     'registration_date' => $svc->registration_date ?? now()->toDateString(),
@@ -275,10 +322,15 @@ class OrderService
             }
         }
 
-        // Activate pending domains on this order
-        Domain::where('order_id', $order->id)
-            ->where('status', DomainStatus::Pending->value)
-            ->update(['status' => DomainStatus::Active->value]);
+        // r133-register: a domain is not active because we said so.
+        //
+        // This used to flip every pending domain to active in one update and
+        // tell no registrar, while register() sat implemented in all four
+        // registrar modules. A customer bought a domain, paid for it, and the
+        // panel showed it live while no registry had heard of it.
+        foreach (Domain::where('order_id', $order->id)->where('status', DomainStatus::Pending->value)->get() as $domain) {
+            $this->registerOrderedDomain($order, $domain);
+        }
 
         // A certificate cannot be issued until the customer supplies a CSR, so
         // paying for one has to open the order and ask them for it.
@@ -345,6 +397,10 @@ class OrderService
         return DB::transaction(function () use ($order) {
             $order->update(['status' => OrderStatus::Cancelled->value]);
 
+            // Before the services flip: stock was taken when this order was
+            // placed and a sale that is not happening hands the unit back.
+            $this->restockOrder($order);
+
             Service::where('order_id', $order->id)
                 ->whereNotIn('status', [ServiceStatus::Terminated->value, ServiceStatus::Cancelled->value])
                 ->update([
@@ -368,27 +424,54 @@ class OrderService
         });
     }
 
+    /** Written onto every service an order's fraud verdict suspends. */
+    private const FRAUD_SUSPENSION_REASON = 'Order marked as fraud';
+
     /**
      * Mark an order as fraud and suspend all related services.
      */
-    public function markFraud(Order $order): Order
+    public function markFraud(Order $order, string $module = 'manual', ?string $output = null): Order
     {
+        // Once. Running the verdict again used to re-suspend and would now
+        // hand stock back a second time.
+        if ($order->status === OrderStatus::Fraud->value) {
+            return $order;
+        }
+
         run_hook('FraudOrder', ['order' => $order]);
 
-        return DB::transaction(function () use ($order) {
+        $services = DB::transaction(function () use ($order, $module, $output) {
             $order->update([
                 'status' => OrderStatus::Fraud->value,
-                'fraud_module' => 'manual',
-                'fraud_output' => 'Manually marked as fraud by admin on '.now()->toDateTimeString(),
+                // The screen that shows this used to claim every held order was
+                // "manually marked by admin", including the ones the automatic
+                // screening held.
+                'fraud_module' => $module,
+                'fraud_output' => $output ?? 'Manually marked as fraud by admin on '.now()->toDateTimeString(),
             ]);
 
-            Service::where('order_id', $order->id)
+            // A held order is not a sale; the unit goes back on the shelf. A
+            // junk-order run used to empty a limited product for good without
+            // paying for anything.
+            $this->restockOrder($order);
+
+            $services = Service::where('order_id', $order->id)
                 ->where('status', ServiceStatus::Active->value)
-                ->update([
+                ->get();
+
+            foreach ($services as $service) {
+                // A service on a server is suspended below, on the server, and
+                // ProvisioningService writes the status once that succeeds.
+                if ($service->server_id) {
+                    continue;
+                }
+
+                $service->update([
                     'status' => ServiceStatus::Suspended->value,
                     'suspension_date' => now()->toDateString(),
-                    'suspension_reason' => 'Order marked as fraud',
+                    'suspension_reason' => self::FRAUD_SUSPENSION_REASON,
                 ]);
+            }
 
             // Cancel unpaid invoice
             if ($order->invoice_id) {
@@ -398,13 +481,74 @@ class OrderService
                 }
             }
 
-            return $order->fresh();
+            return $services;
         });
+
+        // The whole point of calling an order fraudulent is that the account
+        // stops serving. This used to be a query-builder update: no server was
+        // ever told, so the site the fraudster ordered carried on running.
+        // Kept outside the transaction so an unreachable panel cannot hold it
+        // open; a refusal is queued for retry by ProvisioningService.
+        foreach ($services as $service) {
+            if ($service->server_id) {
+                $this->provisioning->suspendAccount($service, self::FRAUD_SUSPENSION_REASON);
+            }
+        }
+
+        return $order->fresh();
     }
 
     /**
      * Soft-delete (cancel) the order and all related items.
      */
+    /**
+     * Put a cancelled or fraud-held order back to pending - the false-alarm
+     * path. The unit the verdict handed back is taken again, so clearing an
+     * alarm does not mint stock; an emptied shelf does not block the reopen,
+     * it just cannot go below zero.
+     */
+    public function reopenOrder(Order $order): Order
+    {
+        if (! in_array($order->status, [OrderStatus::Cancelled->value, OrderStatus::Fraud->value], true)) {
+            return $order;
+        }
+
+        return DB::transaction(function () use ($order) {
+            foreach ($this->stockControlledProductIds($order) as $productId) {
+                Product::whereKey($productId)->where('stock_qty', '>', 0)->decrement('stock_qty');
+            }
+
+            $order->update(['status' => OrderStatus::Pending->value]);
+
+            return $order->fresh();
+        });
+    }
+
+    /** Hand back one unit per stock-controlled service on this order. */
+    private function restockOrder(Order $order): void
+    {
+        foreach ($this->stockControlledProductIds($order) as $productId) {
+            Product::whereKey($productId)->increment('stock_qty');
+        }
+    }
+
+    /**
+     * One entry per service on the order whose product counts stock. Services
+     * already cancelled or terminated gave their unit back when they were, so
+     * they do not count again.
+     *
+     * @return array<int, int>
+     */
+    private function stockControlledProductIds(Order $order): array
+    {
+        return Service::where('order_id', $order->id)
+            ->whereNotIn('status', [ServiceStatus::Terminated->value, ServiceStatus::Cancelled->value])
+            ->whereHas('product', fn ($q) => $q->where('stock_control', true))
+            ->pluck('product_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
     public function deleteOrder(Order $order): void
     {
         DB::transaction(function () use ($order) {
@@ -426,7 +570,11 @@ class OrderService
             'order_id' => $order->id,
             'product_id' => $item['product_id'] ?? null,
             'server_id' => $item['server_id'] ?? null,
-            'domain' => $item['domain'] ?? null,
+            // The same reading the shop gives it: the cart normalises what
+            // was typed, orders are built here, and the order endpoint hands
+            // this method the request verbatim - so a pasted URL used to be
+            // written onto the service and passed to the panel as the name.
+            'domain' => Domain::normalise($item['domain'] ?? null) ?: null,
             'payment_method' => $order->payment_method,
             'qty' => $item['qty'] ?? 1,
             'first_payment_amount' => $item['first_payment_amount'] ?? $item['amount'] ?? 0,
@@ -440,14 +588,177 @@ class OrderService
         ]);
     }
 
+    /**
+     * Put a paid domain in front of its registrar.
+     *
+     * The module writes the registration date, expiry and status itself when
+     * it succeeds. A refusal leaves the domain pending and raises it, because
+     * only a person can sort out a registry that said no.
+     *
+     * A transfer cannot be started from here - it needs an EPP code, which the
+     * order does not collect - so those are recorded as before and flagged for
+     * somebody to start by hand.
+     */
+    private function registerOrderedDomain(Order $order, Domain $domain): void
+    {
+        $registrar = app(ModuleRegistry::class)
+            ->getRegistrarModule((string) $domain->registrar);
+
+        $isTransfer = strtolower((string) $domain->type) === 'transfer';
+
+        if ($isTransfer) {
+            $this->transferOrderedDomain($domain, $registrar);
+
+            return;
+        }
+
+        if (! $registrar) {
+            $domain->update(['status' => DomainStatus::Active->value]);
+
+            return;
+        }
+
+        $client = $order->client;
+
+        $params = array_filter([
+            'firstname' => $client?->first_name,
+            'lastname' => $client?->last_name,
+            'email' => $client?->email,
+            'phone' => $client?->phone_number,
+            'address' => $client?->address1,
+            'city' => $client?->city,
+            'state' => $client?->state,
+            'postcode' => $client?->postcode,
+            'country' => $client?->country,
+        ]);
+
+        try {
+            $result = $registrar->register($domain, max(1, (int) $domain->registration_period), $params);
+        } catch (\Throwable $e) {
+            Log::error("Domain registration threw for {$domain->domain}: ".$e->getMessage());
+            $result = ['success' => false, 'message' => $e->getMessage()];
+        }
+
+        if ($result['success'] ?? false) {
+            $domain->refresh();
+
+            if (strtolower((string) $domain->status) !== DomainStatus::Active->value) {
+                $domain->update(['status' => DomainStatus::Active->value]);
+            }
+
+            return;
+        }
+
+        $reason = (string) ($result['message'] ?? 'no reason given');
+
+        Log::error("Domain registration failed for {$domain->domain}: {$reason}");
+
+        try {
+            app(NotificationService::class)->dispatch('domain.registration_failed', [
+                'event_type' => 'domain.registration_failed',
+                'subject' => 'Domain registration failed',
+                'message' => "The registrar would not register {$domain->domain}: {$reason}. "
+                    .'The customer has paid for it; the domain is not registered and needs attention.',
+                'domain_id' => $domain->id,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Domain registration alert failed: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Start a transfer the customer ordered, using the EPP/auth code they
+     * supplied. Without a registrar or a code there is nothing to hand to the
+     * registry, so the domain is left for a person to start by hand.
+     */
+    private function transferOrderedDomain(Domain $domain, $registrar): void
+    {
+        if (! $registrar) {
+            Log::info("Domain #{$domain->id} ({$domain->domain}) is a transfer but no registrar is configured: it has to be started by hand.");
+            $domain->update(['status' => DomainStatus::Active->value]);
+
+            return;
+        }
+
+        $eppCode = trim((string) ($domain->epp_code ?? ''));
+
+        if ($eppCode === '') {
+            Log::info("Domain #{$domain->id} ({$domain->domain}) is a transfer without an EPP code: it has to be started by hand.");
+            $domain->update(['status' => DomainStatus::Active->value]);
+
+            return;
+        }
+
+        try {
+            $result = $registrar->transfer($domain, $eppCode);
+        } catch (\Throwable $e) {
+            Log::error("Domain transfer threw for {$domain->domain}: ".$e->getMessage());
+            $result = ['success' => false, 'message' => $e->getMessage()];
+        }
+
+        if ($result['success'] ?? false) {
+            $domain->update([
+                'status' => DomainStatus::Active->value,
+                // The code has been consumed; do not keep it lying around.
+                'epp_code' => null,
+            ]);
+
+            return;
+        }
+
+        $reason = (string) ($result['message'] ?? 'no reason given');
+
+        Log::error("Domain transfer failed for {$domain->domain}: {$reason}");
+
+        try {
+            app(NotificationService::class)->dispatch('domain.transfer_failed', [
+                'event_type' => 'domain.transfer_failed',
+                'subject' => 'Domain transfer failed',
+                'message' => "The registrar would not transfer {$domain->domain}: {$reason}. "
+                    .'The customer has paid for it; the transfer needs attention.',
+                'domain_id' => $domain->id,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Domain transfer alert failed: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * The registrar the operator set up for this domain's extension.
+     *
+     * Read from the TLD pricing table, where the field lives.
+     */
+    private function registrarForTld(string $domain): ?string
+    {
+        $domain = Domain::normalise($domain);
+
+        if ($domain === '' || ! str_contains($domain, '.')) {
+            return null;
+        }
+
+        $tld = '.'.substr($domain, strpos($domain, '.') + 1);
+
+        $registrar = DomainPricing::whereRaw('LOWER(extension) = ?', [strtolower($tld)])
+            ->value('auto_registrar');
+
+        return filled($registrar) ? (string) $registrar : null;
+    }
+
     private function createDomainForOrder(Order $order, Client $client, array $item): Domain
     {
         return Domain::create([
             'client_id' => $client->id,
             'order_id' => $order->id,
-            'domain' => $item['domain'] ?? '',
+            'domain' => Domain::normalise($item['domain'] ?? ''),
+            'epp_code' => $item['epp_code'] ?? null,
             'type' => $item['domain_type'] ?? 'register',
-            'registrar' => $item['registrar'] ?? 'Manual',
+            // r148-autoregistrar: the TLD pricing screen has a registrar field
+            // for exactly this, and nothing read it - every domain ordered
+            // through the shop was created as Manual, so a TLD set up to
+            // register through eNom was marked active without any registry
+            // hearing about it. An order that names its own registrar still
+            // wins; a TLD with none set is still done by hand.
+            'registrar' => $item['registrar'] ?? $this->registrarForTld($item['domain'] ?? '') ?? 'Manual',
             'registration_date' => now()->toDateString(),
             'expiry_date' => now()->addYears(max(1, (int) ($item['registration_period'] ?? 1)))->toDateString(),
             'next_due_date' => now()->addYears(max(1, (int) ($item['registration_period'] ?? 1)))->toDateString(),
@@ -462,15 +773,7 @@ class OrderService
 
     private function calculateNextDueDate(string $billingCycle): string
     {
-        return match (strtolower($billingCycle)) {
-            'monthly' => now()->addMonth()->toDateString(),
-            'quarterly' => now()->addMonths(3)->toDateString(),
-            'semi-annually' => now()->addMonths(6)->toDateString(),
-            'annually' => now()->addYear()->toDateString(),
-            'biennially' => now()->addYears(2)->toDateString(),
-            'triennially' => now()->addYears(3)->toDateString(),
-            default => now()->addMonth()->toDateString(),
-        };
+        return BillingCycleHelper::advance(now(), $billingCycle)->toDateString();
     }
 
     private function buildServiceDescription(Service $service, array $item): string
@@ -484,7 +787,15 @@ class OrderService
             ? app(ConfigOptionService::class)->summarise($item['config_options'])
             : '';
 
-        return "{$name} ({$cycle}){$domain}".($configured ? " ({$configured})" : '');
+        // The parenthesis shows the paid billing period, not the raw cycle
+        // name, matching the renewal invoices (2026/08/15 - 2026/09/15).
+        $dueDate = $service->next_due_date
+            ? Carbon::parse($service->next_due_date)
+            : Carbon::now()->addMonths(Service::monthsInCycle($cycle));
+        $periodStart = $dueDate->copy()->subMonths(Service::monthsInCycle($cycle));
+        $period = $periodStart->format('Y/m/d').' - '.$dueDate->format('Y/m/d');
+
+        return "{$name} ({$period}){$domain}".($configured ? " ({$configured})" : '');
     }
 
     private function generateOrderNumber(): string

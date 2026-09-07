@@ -23,8 +23,8 @@ class AuthorizeNetModule implements GatewayModuleInterface
     public function getConfigFields(): array
     {
         return [
-            ["name" => "api_login_id",    "label" => "API Login ID",      "type" => "text"],
-            ["name" => "transaction_key", "label" => "Transaction Key",   "type" => "password"],
+            ["name" => "api_login_id",    "label" => "API Login ID",      "type" => "text", "required" => true],
+            ["name" => "transaction_key", "label" => "Transaction Key",   "type" => "password", "required" => true],
             ["name" => "client_key",      "label" => "Client Key (Accept.js)", "type" => "text"],
             ["name" => "sandbox",         "label" => "Test Mode",         "type" => "select", "options" => ["0" => "Live", "1" => "Sandbox"]],
         ];
@@ -182,7 +182,7 @@ class AuthorizeNetModule implements GatewayModuleInterface
         $loginId   = $this->getSetting("api_login_id") ?? "";
         $clientKey = $this->getSetting("client_key") ?? "";
         $sandbox   = $this->getSetting("sandbox") === "1";
-        $amount    = number_format((float) $invoice->total, 2, ".", "");
+        $amount    = money_fmt($invoice->amountDue());
         $invoiceId = (int) $invoice->id;
 
         if (!$loginId || !$clientKey) {
@@ -289,13 +289,26 @@ HTML;
         $sigHeader     = $data["_signature_header"] ?? "";
         $txnKey        = $this->getSetting("transaction_key") ?? "";
 
-        if ($sigHeader && $payload && $txnKey) {
-            $computed = strtolower(hash_hmac("sha512", $payload, $txnKey));
-            $received = strtolower(ltrim($sigHeader, "sha512="));
-            if (!hash_equals($computed, $received)) {
-                Log::warning("Authorize.net: webhook signature verification failed");
-                return ["success" => false, "message" => "Invalid webhook signature."];
-            }
+        // r130-signature: prove who sent this before acting on it.
+        //
+        // The check used to run only when a signature header happened to be
+        // present, so leaving the header off skipped it entirely and anyone
+        // able to post here could name an invoice and have it marked paid for
+        // nothing. Every other gateway refuses an unsigned call.
+        if (!$payload || !$txnKey || !$sigHeader) {
+            Log::warning("Authorize.net: webhook refused - no signature to check against");
+            return ["success" => false, "message" => "Unsigned webhook."];
+        }
+
+        // A prefix, not a set of characters: ltrim("5a1f...", "sha512=") also
+        // eats a leading 5, a, 1 or 2 from the signature itself, so genuine
+        // webhooks were rejected depending on how their hash began.
+        $computed = strtolower(hash_hmac("sha512", $payload, $txnKey));
+        $received = strtolower(preg_replace('/^sha512=/i', "", trim($sigHeader)));
+
+        if (!hash_equals($computed, $received)) {
+            Log::warning("Authorize.net: webhook signature verification failed");
+            return ["success" => false, "message" => "Invalid webhook signature."];
         }
 
         $eventType = $data["eventType"] ?? "";
@@ -313,10 +326,15 @@ HTML;
             "invoice_id"     => $invoiceId,
         ]);
 
+        // What was actually captured. Without this the caller falls back to the
+        // invoice total, so a part capture was recorded as payment in full.
+        $captured = isset($payload["authAmount"]) ? (float) $payload["authAmount"] : null;
+
         return [
             "success"        => true,
             "transaction_id" => $txnId,
             "invoice_id"     => $invoiceId,
+            "amount"         => $captured,
             "gateway"        => "authorize",
         ];
     }

@@ -3,9 +3,11 @@
 namespace App\Mail;
 
 use App\Models\Invoice;
-use App\Models\Setting;
+use App\Mail\Concerns\LocalizesToRecipient;
+use App\Services\InvoicePdfService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -14,11 +16,14 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class PaymentReminderMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+    use LocalizesToRecipient;
 
     public function __construct(
         public Invoice $invoice,
         public int $daysOffset // positive = days until due, negative = days overdue
-    ) {}
+    ) {
+        $this->localizeTo($this->invoice);
+    }
 
     public function envelope(): Envelope
     {
@@ -41,8 +46,20 @@ class PaymentReminderMail extends Mailable implements ShouldQueue
             with: [
                 'invoice' => $this->invoice,
                 'daysOffset' => $this->daysOffset,
-                'companyName' => Setting::get('CompanyName', 'PNLCS'),
+                'companyName' => company_name(),
             ],
         );
+    }
+
+    public function attachments(): array
+    {
+        $pdf = app(InvoicePdfService::class)->generate($this->invoice);
+
+        $num = str_replace(['/', '\\'], '-', (string) ($this->invoice->invoice_num ?? $this->invoice->id));
+
+        return [
+            Attachment::fromData(fn () => $pdf->output(), "invoice-{$num}.pdf")
+                ->withMime('application/pdf'),
+        ];
     }
 }

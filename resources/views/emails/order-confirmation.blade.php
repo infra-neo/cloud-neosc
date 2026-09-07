@@ -10,7 +10,7 @@
 <table style="width:100%;border-collapse:collapse;margin:20px 0;">
 <tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>{{ __('email.order_confirmation.order_id') }}</strong></td><td style="padding:8px;border-bottom:1px solid #eee;">#{{ $order->id }}</td></tr>
 <tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>{{ __('email.common.date_label') }}</strong></td><td style="padding:8px;border-bottom:1px solid #eee;">{{ $order->created_at?->format(date_fmt()) ?? now()->format(date_fmt()) }}</td></tr>
-<tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>{{ __('email.order_confirmation.payment_method') }}</strong></td><td style="padding:8px;border-bottom:1px solid #eee;">{{ $order->payment_method ?? 'N/A' }}</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>{{ __('email.order_confirmation.payment_method') }}</strong></td><td style="padding:8px;border-bottom:1px solid #eee;">{{ $order->payment_method ? payment_method_label((string) $order->payment_method) : 'N/A' }}</td></tr>
 </table>
 
 @if($order->items && count($order->items) > 0)
@@ -25,17 +25,19 @@
 <tr>
 <td style="padding:8px;border-bottom:1px solid #eee;">{{ $item->product?->name ?? __('email.common.service') }}</td>
 <td style="padding:8px;border-bottom:1px solid #eee;">{{ $item->domain ?? '-' }}</td>
-<td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${{ number_format((float)($item->price ?? 0), 2) }}</td>
+<td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">{{ money_fmt((float)($item->price ?? 0)) }}</td>
 </tr>
 @endforeach
 <tr style="background:#f8f9fa;">
 <td colspan="2" style="padding:8px;border-bottom:1px solid #eee;"><strong>{{ __('email.common.total_label') }}</strong></td>
-<td style="padding:8px;border-bottom:1px solid #eee;text-align:right;"><strong>${{ number_format((float)$order->total, 2) }}</strong></td>
+<td style="padding:8px;border-bottom:1px solid #eee;text-align:right;"><strong>{{ money_fmt($order->total) }}</strong></td>
 </tr>
 </table>
 @endif
 
 <p>{{ __('email.order_confirmation.setup_shortly') }}</p>
+
+@include('emails.partials.action', ['url' => $order->invoice_id ? route('client.invoices.show', $order->invoice_id) : route('client.home'), 'label' => __('email.common.view_invoice')])
 
 <p style="color:#888;font-size:12px;margin-top:30px;">{{ $companyName }}</p>
 </body></html>

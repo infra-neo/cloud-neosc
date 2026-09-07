@@ -68,7 +68,15 @@ class Product extends Model
 
         $price = round((float) $row->{$column}, 2);
 
-        return $price > 0 ? $price : null;
+        if ($price > 0) {
+            return $price;
+        }
+
+        // A free product's zero is a real price: the checkout accepts it and
+        // the zero-total invoice settles itself as paid (OrderService). Without
+        // this the product had no billing cycle at all and could not be
+        // ordered. A negative value still means "not sold on this cycle".
+        return $this->pay_type === 'free' && $price >= 0 ? 0.0 : null;
     }
 
     /**
@@ -105,5 +113,60 @@ class Product extends Model
     public function scopeActive($q)
     {
         return $q->where('hidden', false)->where('retired', false);
+    }
+
+    /**
+     * What the plan actually gives, read from the product's own configuration.
+     *
+     * Written out rather than typed into a feature list, because a hand-written
+     * "1 GB RAM" goes stale the moment somebody edits the limits and nobody
+     * remembers to edit the marketing copy too. These are the numbers the panel
+     * will enforce.
+     *
+     * @return array<int, array{icon: string, text: string}>
+     */
+    public function resourceSummary(): array
+    {
+        $c = is_string($this->config_options) ? (json_decode($this->config_options, true) ?: []) : ((array) $this->config_options);
+        if ($c === []) {
+            return [];
+        }
+
+        // 3072 GB of bandwidth reads as a mistake; say 3 TB.
+        $mb = function ($v) {
+            $v = (int) $v;
+            $trim = fn ($n) => rtrim(rtrim(number_format($n, 1, '.', ''), '0'), '.');
+
+            if ($v >= 1048576) {
+                return $trim($v / 1048576).' TB';
+            }
+
+            return $v >= 1024 ? $trim($v / 1024).' GB' : $v.' MB';
+        };
+
+        $out = [];
+        if (($c['res_memory_mb'] ?? 0) > 0) {
+            $out[] = ['icon' => 'ri-ram-2-line', 'text' => __('client.store.res_memory', ['value' => $mb($c['res_memory_mb'])])];
+        }
+        if (($c['res_cpu_percent'] ?? 0) > 0) {
+            // 100% is one core, so say it in cores - a percentage over 100 reads
+            // like an error to anyone who has not seen a cgroup.
+            $cores = (int) $c['res_cpu_percent'] / 100;
+            $out[] = ['icon' => 'ri-cpu-line', 'text' => __('client.store.res_cpu', ['value' => rtrim(rtrim(number_format($cores, 1, '.', ''), '0'), '.')])];
+        }
+        if (($c['res_disk_mb'] ?? 0) > 0) {
+            $out[] = ['icon' => 'ri-hard-drive-2-line', 'text' => __('client.store.res_disk', ['value' => $mb($c['res_disk_mb'])])];
+        }
+        if (($c['res_bandwidth_mb'] ?? 0) > 0) {
+            $out[] = ['icon' => 'ri-exchange-line', 'text' => __('client.store.res_bandwidth', ['value' => $mb($c['res_bandwidth_mb'])])];
+        }
+        if (($c['res_max_containers'] ?? 0) > 0) {
+            $out[] = ['icon' => 'ri-apps-2-line', 'text' => trans_choice('client.store.res_apps', (int) $c['res_max_containers'], ['count' => (int) $c['res_max_containers']])];
+        }
+        if (($c['res_max_domains'] ?? 0) > 0) {
+            $out[] = ['icon' => 'ri-global-line', 'text' => trans_choice('client.store.res_domains', (int) $c['res_max_domains'], ['count' => (int) $c['res_max_domains']])];
+        }
+
+        return $out;
     }
 }

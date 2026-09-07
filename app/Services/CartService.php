@@ -8,16 +8,24 @@ use App\Models\Domain;
 use App\Models\DomainPricing;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductAddon;
 use App\Models\Promotion;
+use App\Models\Service;
 use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
 
 class CartService
 {
+    /**
+     * The account's cart, or the visitor's.
+     *
+     * A guest cart is remembered IN the session data, not keyed by the session
+     * id: Laravel rotates the id on login and carries the data across, so a
+     * cart tied to the id evaporated at the exact moment its owner appeared.
+     * Tied to the data, it survives the rotation and simply changes hands.
+     */
     public function getOrCreateCart(?int $clientId = null): Cart
     {
-        $sessionId = session()->getId();
-
         if ($clientId) {
             $cart = Cart::where('user_id', $clientId)->first();
             if ($cart) {
@@ -25,20 +33,36 @@ class CartService
             }
         }
 
-        $cart = Cart::where('session_id', $sessionId)->first();
-        if ($cart) {
-            if ($clientId && ! $cart->user_id) {
-                $cart->update(['user_id' => $clientId]);
-            }
+        $guestCartId = session('guest_cart_id');
+        if ($guestCartId) {
+            // Only a cart that still belongs to nobody, or to this very
+            // account: a stale id pointing at someone else's cart - a shared
+            // machine, an old session - must not hand their basket over.
+            $cart = Cart::whereKey($guestCartId)
+                ->where(fn ($q) => $q->whereNull('user_id')->when($clientId, fn ($q2) => $q2->orWhere('user_id', $clientId)))
+                ->first();
+            if ($cart) {
+                if ($clientId && ! $cart->user_id) {
+                    $cart->update(['user_id' => $clientId]);
+                    session()->forget('guest_cart_id');
+                }
 
-            return $cart;
+                return $cart;
+            }
+            session()->forget('guest_cart_id');
         }
 
-        return Cart::create([
+        $cart = Cart::create([
             'user_id' => $clientId,
-            'session_id' => $sessionId,
+            'session_id' => session()->getId(),
             'data' => json_encode(['items' => [], 'promo_code' => null, 'currency_id' => null]),
         ]);
+
+        if (! $clientId) {
+            session(['guest_cart_id' => $cart->id]);
+        }
+
+        return $cart;
     }
 
     private function getData(Cart $cart): array
@@ -59,7 +83,7 @@ class CartService
         return $cart;
     }
 
-    public function addProduct(Cart $cart, Product $product, string $billingCycle, ?string $domain = null, array $configOptions = [], ?string $notes = null, ?string $domainOption = null, array $addons = []): Cart
+    public function addProduct(Cart $cart, Product $product, string $billingCycle, ?string $domain = null, array $configOptions = [], ?string $notes = null, ?string $domainOption = null, array $addons = [], ?string $appSlug = null): Cart
     {
         // The configure page refuses these and the listing leaves them out, but
         // the request that gets here only checked that the id exists — enough to
@@ -77,12 +101,45 @@ class CartService
             ]);
         }
 
+        // A hosting account has to serve something: an order without a domain
+        // provisioned as an account with no site, and the admin could only
+        // cancel it. The form always asks for one; the request is not the form.
+        if ($product->type === 'hosting' && $product->show_domain_options && trim((string) $domain) === '') {
+            throw ValidationException::withMessages([
+                'domain' => __('client.cart.domain_required'),
+            ]);
+        }
+
+        // A free product is one per customer. There is no per-client purchase
+        // limit anywhere in the product schema, so it is enforced here: a
+        // second copy in the same cart, or an order from a client that already
+        // holds a live service of it, is refused.
+        if ($product->pay_type === 'free') {
+            foreach (($this->getData($cart)['items'] ?? []) as $existing) {
+                if (($existing['type'] ?? 'product') !== 'domain'
+                    && (int) ($existing['product_id'] ?? 0) === (int) $product->id) {
+                    throw ValidationException::withMessages([
+                        'product_id' => __('client.cart.free_limit_reached'),
+                    ]);
+                }
+            }
+            if ($cart->user_id && Service::where('client_id', $cart->user_id)
+                    ->where('product_id', $product->id)
+                    ->whereNotIn('status', ['terminated', 'cancelled'])
+                    ->exists()) {
+                throw ValidationException::withMessages([
+                    'product_id' => __('client.cart.free_limit_reached'),
+                ]);
+            }
+        }
+
         $price = $this->getProductPrice($product, $billingCycle);
 
         // The order form only offers cycles the product is priced for, but the
         // request accepted any cycle in the enum, so posting an unpriced one
-        // bought the product for nothing.
-        if ($price <= 0) {
+        // bought the product for nothing. A free product's zero is a real
+        // price, but only on the cycles it is actually offered on.
+        if ($product->priceFor($billingCycle) === null || ($price <= 0 && $product->pay_type !== 'free')) {
             throw ValidationException::withMessages([
                 'billing_cycle' => __('client.cart.cycle_unavailable'),
             ]);
@@ -121,6 +178,9 @@ class CartService
             'domain' => $domain,
             'domain_option' => $domainOption,
             'config_options' => $options,
+            // The app this order installs, when the product lets the customer
+            // choose one rather than selling a fixed app.
+            'app_slug' => $appSlug,
             'price' => round($price, 2),
             'notes' => $notes,
         ];
@@ -131,7 +191,7 @@ class CartService
     /**
      * Add a domain registration/transfer to the cart.
      */
-    public function addDomain(Cart $cart, string $domain, string $type = 'register', int $years = 1): Cart
+    public function addDomain(Cart $cart, string $domain, string $type = 'register', int $years = 1, ?string $eppCode = null): Cart
     {
         $tld = '.'.implode('.', array_slice(explode('.', $domain), 1));
         $pricing = DomainPricing::where('extension', $tld)->where('enabled', true)->first();
@@ -174,6 +234,7 @@ class CartService
             'tld' => $tld,
             'action' => $type, // register | transfer
             'years' => $years,
+            'epp_code' => $type === 'transfer' ? ($eppCode ?: null) : null,
             'price' => $price,
             'renewal_amount' => $renewal,
         ];
@@ -222,16 +283,44 @@ class CartService
         $items = $data['items'] ?? [];
         $promoCode = $data['promo_code'] ?? null;
 
-        $subtotal = 0.0;
+        // r147-linebased: quote what the invoice will charge.
+        //
+        // This applied the tax rate to the whole subtotal and knew nothing
+        // about which lines carry tax, and it never mentioned the customer's
+        // group discount - which the invoice applies as a line of its own. So
+        // somebody buying a product marked not taxable was quoted tax that was
+        // never charged, and somebody in a discount group was quoted the full
+        // price and billed less. The order below is the invoice's order:
+        // lines, then the group discount, then the promotion, then tax on what
+        // is left of the taxable side.
+        $taxFlags = $this->taxFlagsFor($items);
+
+        $taxable = 0.0;
+        $untaxed = 0.0;
         $enrichedItems = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $index => $item) {
             $price = (float) ($item['price'] ?? 0);
-            $addonTotal = array_sum(array_map(
-                fn ($a) => (float) ($a['price'] ?? 0),
-                $item['addons'] ?? []
-            ));
-            $subtotal += $price + $addonTotal;
+            $addons = $item['addons'] ?? [];
+
+            $addonTotal = array_sum(array_map(fn ($a) => (float) ($a['price'] ?? 0), $addons));
+
+            if ($taxFlags['items'][$index] ?? true) {
+                $taxable += $price;
+            } else {
+                $untaxed += $price;
+            }
+
+            foreach ($addons as $addonIndex => $addon) {
+                $addonPrice = (float) ($addon['price'] ?? 0);
+
+                if ($taxFlags['addons'][$index][$addonIndex] ?? true) {
+                    $taxable += $addonPrice;
+                } else {
+                    $untaxed += $addonPrice;
+                }
+            }
+
             $enrichedItems[] = array_merge($item, [
                 'price' => $price,
                 'addon_total' => round($addonTotal, 2),
@@ -239,33 +328,113 @@ class CartService
             ]);
         }
 
-        $discount = 0.0;
+        $subtotal = $taxable + $untaxed;
+
+        // The group discount comes off each side separately, exactly as the
+        // invoice writes it, so the taxable amount falls by the discount given
+        // on taxable work and no more.
+        $groupPercent = (float) ($this->cartClient($cart)?->group?->discount_percent ?? 0);
+        $groupDiscount = 0.0;
+
+        if ($groupPercent > 0) {
+            $onTaxable = round($taxable * ($groupPercent / 100), 2);
+            $onUntaxed = round($untaxed * ($groupPercent / 100), 2);
+
+            $taxable -= $onTaxable;
+            $untaxed -= $onUntaxed;
+            $groupDiscount = $onTaxable + $onUntaxed;
+        }
+
+        $promoDiscount = 0.0;
+
         if ($promoCode) {
             $promo = Promotion::where('code', $promoCode)->first();
+
             if ($promo && $promo->isValidFor($this->cartClient($cart), $this->cartProductIds($cart))) {
-                if ($promo->type === 'percentage') {
-                    $discount = round($subtotal * ((float) $promo->value / 100), 2);
+                $discountable = $taxable + $untaxed;
+
+                $promoDiscount = $promo->type === 'percentage'
+                    ? round($discountable * ((float) $promo->value / 100), 2)
+                    : min((float) $promo->value, $discountable);
+
+                // The invoice writes the promotion as one line, taxed when
+                // there is any taxable work on the order, so it comes off the
+                // taxable side first.
+                if ($taxable > 0) {
+                    $taxable -= $promoDiscount;
                 } else {
-                    $discount = min((float) $promo->value, $subtotal);
+                    $untaxed -= $promoDiscount;
                 }
             }
         }
 
-        $taxableAmount = max(0, $subtotal - $discount);
         // carts.user_id holds the client id, despite the column name.
         $taxRate = $this->getTaxRate($cart->user_id);
-        $taxAmount = round($taxableAmount * ($taxRate / 100), 2);
-        $total = round($taxableAmount + $taxAmount, 2);
+        $taxAmount = round($taxable * ($taxRate / 100), 2);
+        $total = round(max(0, $taxable + $untaxed) + $taxAmount, 2);
 
         return [
             'subtotal' => round($subtotal, 2),
-            'discount' => round($discount, 2),
+            'discount' => round($groupDiscount + $promoDiscount, 2),
+            'group_discount' => round($groupDiscount, 2),
+            'promo_discount' => round($promoDiscount, 2),
             'tax' => $taxAmount,
             'tax_rate' => $taxRate,
             'total' => $total,
             'items' => $enrichedItems,
             'promo_code' => $promoCode,
         ];
+    }
+
+    /**
+     * Which basket lines carry tax, read the same way the invoice reads them.
+     *
+     * A product line follows its product's flag; an addon follows its own; a
+     * domain always carries tax, because a domain has no flag of its own and
+     * the order writes it that way.
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     * @return array{items: array<int, bool>, addons: array<int, array<int, bool>>}
+     */
+    private function taxFlagsFor(array $items): array
+    {
+        $productIds = [];
+        $addonIds = [];
+
+        foreach ($items as $item) {
+            if (($item['type'] ?? 'product') !== 'domain' && ! empty($item['product_id'])) {
+                $productIds[] = (int) $item['product_id'];
+            }
+
+            foreach ($item['addons'] ?? [] as $addon) {
+                if (! empty($addon['addon_id'])) {
+                    $addonIds[] = (int) $addon['addon_id'];
+                }
+            }
+        }
+
+        $productTax = $productIds
+            ? Product::whereIn('id', array_unique($productIds))->pluck('tax', 'id')->all()
+            : [];
+
+        $addonTax = $addonIds
+            ? ProductAddon::whereIn('id', array_unique($addonIds))->pluck('tax', 'id')->all()
+            : [];
+
+        $flags = ['items' => [], 'addons' => []];
+
+        foreach ($items as $index => $item) {
+            $flags['items'][$index] = ($item['type'] ?? 'product') === 'domain'
+                ? true
+                : (bool) ($productTax[(int) ($item['product_id'] ?? 0)] ?? true);
+
+            foreach ($item['addons'] ?? [] as $addonIndex => $addon) {
+                $flags['addons'][$index][$addonIndex] =
+                    (bool) ($addonTax[(int) ($addon['addon_id'] ?? 0)] ?? true);
+            }
+        }
+
+        return $flags;
     }
 
     /**
@@ -289,6 +458,7 @@ class CartService
                     'domain' => $item['domain'],
                     'domain_type' => ($item['action'] ?? 'register') === 'transfer' ? 'Transfer' : 'Register',
                     'registration_period' => (int) ($item['years'] ?? 1),
+                    'epp_code' => $item['epp_code'] ?? null,
                     'amount' => (float) ($item['price'] ?? 0),
                     'renewal_amount' => (float) ($item['renewal_amount'] ?? $item['price'] ?? 0),
                 ];
@@ -305,7 +475,31 @@ class CartService
                 'notes' => $item['notes'] ?? null,
                 'config_options' => $item['config_options'] ?? [],
                 'addons' => $item['addons'] ?? [],
+                // The app the customer picked while ordering. Dropped here once,
+                // which meant the order was placed for "WordPress" and
+                // provisioned as an empty account: the cart knew, and nothing
+                // downstream was told.
+                'app_slug' => $item['app_slug'] ?? null,
             ];
+        }
+
+        // The cart-time check cannot see a guest's history - their account is
+        // only created at checkout - so the one-per-customer rule for free
+        // products is enforced once more here, where the client is known.
+        foreach ($items as $checkItem) {
+            if (($checkItem['type'] ?? '') !== 'service') {
+                continue;
+            }
+            $checkProduct = Product::find($checkItem['product_id']);
+            if ($checkProduct && $checkProduct->pay_type === 'free'
+                && Service::where('client_id', $clientId)
+                    ->where('product_id', $checkProduct->id)
+                    ->whereNotIn('status', ['terminated', 'cancelled'])
+                    ->exists()) {
+                throw ValidationException::withMessages([
+                    'product_id' => __('client.cart.free_limit_reached'),
+                ]);
+            }
         }
 
         $order = app(OrderService::class)->processOrder(
