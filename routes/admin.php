@@ -98,12 +98,14 @@ Route::middleware(['admin.auth', 'admin.2fa'])->prefix('admin')->name('admin.')-
         // The product form asks the server which plans it offers.
         Route::get('products/packages', [ProductController::class, 'packages'])->name('products.packages');
         Route::get('products/proxmox-catalog', [ProductController::class, 'proxmoxCatalog'])->name('products.proxmox-catalog');
+        Route::get('products/opennebula-catalog', [ProductController::class, 'opennebulaCatalog'])->name('products.opennebula-catalog');
         Route::get('products', [ProductController::class, 'index'])->name('products.index');
     });
     // The app catalogue lives on the panel; what we own is how it looks to a
     // customer, so this manages the images only.
     Route::middleware('admin.permission:manage_products')->group(function () {
         Route::post('products/{product}/proxmox-options', [ProductController::class, 'proxmoxOptions'])->name('products.proxmox-options');
+        Route::post('products/{product}/opennebula-options', [ProductController::class, 'opennebulaOptions'])->name('products.opennebula-options');
         Route::get('docker-apps', [DockerAppController::class, 'index'])->name('docker-apps.index');
         Route::post('docker-apps/upload', [DockerAppController::class, 'upload'])->name('docker-apps.upload');
         Route::post('docker-apps/fetch', [DockerAppController::class, 'fetch'])->name('docker-apps.fetch');

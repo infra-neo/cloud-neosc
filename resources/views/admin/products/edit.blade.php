@@ -132,6 +132,7 @@
 
     @php $cfg = is_string($product->config_options) ? (json_decode($product->config_options, true) ?: []) : ($product->config_options ?? []); @endphp
     @include('admin.products.partials.proxmox')
+    @include('admin.products.partials.opennebula')
     <div class="card" data-module-card="panelica" style="margin-bottom:15px;">
         <div class="card-header"><strong>{{ __('admin.products.panelica_resources') }}</strong> <span style="font-size:11px;color:#888;">&mdash; {{ __('admin.products.panelica_resources_hint') }}</span></div>
         <div class="card-body">
@@ -318,9 +319,11 @@
             panelica.querySelectorAll('input,select,textarea').forEach(function (f) { f.disabled = !on; });
         }
         if (window.pnlcsProxmoxCard) { window.pnlcsProxmoxCard.show(m === 'proxmox'); }
+        if (window.pnlcsOpenNebulaCard) { window.pnlcsOpenNebulaCard.show(m === 'opennebula'); }
         // Proxmox has no plans on the server: its resources are set in its own card.
+        // OpenNebula picks its template there too.
         var pkg = document.getElementById('package-group');
-        if (pkg) { pkg.style.display = m === 'proxmox' ? 'none' : ''; }
+        if (pkg) { pkg.style.display = (m === 'proxmox' || m === 'opennebula') ? 'none' : ''; }
     }
     if (moduleSelect) { moduleSelect.addEventListener('change', showCards); }
     document.addEventListener('DOMContentLoaded', showCards);

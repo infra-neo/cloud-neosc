@@ -242,6 +242,108 @@ class ProductController extends Controller
     }
 
     /**
+     * Templates, clusters, datastores, networks and security groups of an
+     * OpenNebula server, for the product form's drop-downs.
+     */
+    public function opennebulaCatalog(Request $request)
+    {
+        $server = Server::where('type', 'opennebula')
+            ->when($request->integer('server_id'), fn ($q, $id) => $q->whereKey($id))
+            ->orderByDesc('active')->first();
+
+        if (! $server) {
+            return response()->json(['ok' => false, 'error' => __('admin.products.no_server_for_module')]);
+        }
+
+        try {
+            $catalog = app(ModuleRegistry::class)->getServerModule('opennebula')->catalog($server);
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'error' => $e->getMessage()]);
+        }
+
+        return response()->json($catalog + ['server_id' => $server->id]);
+    }
+
+    /**
+     * Build the order options (template, memory, vCPUs, disk) of an OpenNebula
+     * product from the short form on its page, in one step.
+     */
+    public function opennebulaOptions(Request $request, Product $product)
+    {
+        if (strtolower((string) $product->server_type) !== 'opennebula') {
+            return response()->json(['success' => false, 'message' => __('opennebula.product.opt_save_first')], 422);
+        }
+
+        $request->validate([
+            'options' => 'required|array',
+            'options.*.title' => 'nullable|string|max:80',
+            'options.*.choices' => 'required|array|min:1|max:30',
+            'options.*.choices.*.value' => 'required|string|max:255',
+            'options.*.choices.*.label' => 'nullable|string|max:80',
+            'options.*.choices.*.price' => 'nullable|numeric|min:0|max:100000',
+        ]);
+
+        // The templates the OS choices may name are the ones the server really has.
+        $server = Server::where('type', 'opennebula')->orderByDesc('active')->first();
+        $catalog = $server ? app(ModuleRegistry::class)->getServerModule('opennebula')->catalog($server) : ['ok' => false];
+        $names = $catalog['ok'] ? collect($catalog['templates'])->pluck('name', 'id')->all() : [];
+
+        $group = \Modules\Servers\OpenNebula\OpenNebulaOrderOptions::create($product, (array) $request->input('options'), $names);
+        \App\Models\ActivityLog::log("Order options created for OpenNebula product #{$product->id} (group #{$group->id})", auth('admin')->user()?->full_name ?: 'admin');
+
+        return response()->json([
+            'success' => true,
+            'message' => __('opennebula.product.opt_created'),
+            'linked' => \Modules\Servers\OpenNebula\OpenNebulaOrderOptions::linked($product->fresh()),
+        ]);
+    }
+
+    /**
+     * The OpenNebula part of the product form, validated and ready to merge
+     * into the product's config.
+     */
+    private function opennebulaConfig(Request $request): array
+    {
+        $id = ['nullable', 'regex:/^[0-9]*$/'];
+        $v = $request->validate([
+            'one_template' => ['nullable', 'regex:/^[0-9]*$/'],
+            'one_cores' => 'nullable|integer|min:0|max:512',
+            'one_cpu' => 'nullable|numeric|min:0|max:512',
+            'one_memory' => 'nullable|integer|min:0|max:4194304',
+            'one_disk' => 'nullable|integer|min:0|max:1048576',
+            'one_cluster' => $id,
+            'one_datastore' => $id,
+            'one_network' => $id,
+            'one_secgroup' => $id,
+            'one_rate' => 'nullable|numeric|min:0|max:100000',
+            'one_nameserver' => 'nullable|string|max:255',
+            'one_ciuser' => ['nullable', 'regex:/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/'],
+            'one_snapshots' => 'nullable|integer|min:0|max:50',
+        ]);
+
+        return [
+            'one_template' => (string) ($v['one_template'] ?? ''),
+            'one_cores' => (int) ($v['one_cores'] ?? 0),
+            'one_cpu' => (float) ($v['one_cpu'] ?? 0),
+            'one_memory' => (int) ($v['one_memory'] ?? 0),
+            'one_disk' => (int) ($v['one_disk'] ?? 0),
+            'one_cluster' => (string) ($v['one_cluster'] ?? ''),
+            'one_datastore' => (string) ($v['one_datastore'] ?? ''),
+            'one_network' => (string) ($v['one_network'] ?? ''),
+            'one_secgroup' => (string) ($v['one_secgroup'] ?? ''),
+            'one_rate' => (float) ($v['one_rate'] ?? 0),
+            'one_nameserver' => (string) ($v['one_nameserver'] ?? ''),
+            'one_ciuser' => (string) ($v['one_ciuser'] ?? ''),
+            'one_snapshots' => (int) ($v['one_snapshots'] ?? 0),
+            'one_password' => $request->boolean('one_password') ? 1 : 0,
+        ] + (($v['one_template'] ?? '') === '' ? [] : [
+            // The one key every module reads for the plan a product sells.
+            'package_name' => $v['one_template'],
+            'panelica_plan_id' => $v['one_template'],
+        ]);
+    }
+
+    /**
      * The Proxmox part of the product form, validated and ready to merge into
      * config_options.
      */
@@ -401,6 +503,8 @@ class ProductController extends Controller
             'selectedUpgrades' => $product->upgradeProducts()->pluck('products.id')->map(fn ($id) => (int) $id)->all(),
             'proxmoxServers' => Server::where('type', 'proxmox')->orderByDesc('active')->orderBy('name')->get(['id', 'name', 'active']),
             'pveOrderOptions' => strtolower((string) $product->server_type) === 'proxmox' ? \Modules\Servers\Proxmox\ProxmoxOrderOptions::linked($product) : [],
+            'opennebulaServers' => Server::where('type', 'opennebula')->orderByDesc('active')->orderBy('name')->get(['id', 'name', 'active']),
+            'oneOrderOptions' => strtolower((string) $product->server_type) === 'opennebula' ? \Modules\Servers\OpenNebula\OpenNebulaOrderOptions::linked($product) : [],
             'selectedPackage' => (string) ($this->productConfig($product)['package_name']
                 ?? $this->productConfig($product)['panelica_plan_id']
                 ?? $this->productConfig($product)['cpanel_package']
@@ -457,6 +561,10 @@ class ProductController extends Controller
             ? $this->proxmoxConfig($request)
             : null;
 
+        $opennebulaConfig = $request->boolean('one_section') && strtolower((string) ($validated['server_type'] ?? '')) === 'opennebula'
+            ? $this->opennebulaConfig($request)
+            : null;
+
         $validated['stock_control'] = $request->boolean('stock_control');
         $validated['stock_qty'] = (int) $request->input('stock_qty', 0);
         $validated['hidden'] = $request->boolean('hidden');
@@ -500,6 +608,11 @@ class ProductController extends Controller
 
         if ($proxmoxConfig !== null) {
             $product->update(['config_options' => array_merge($this->productConfig($product->fresh()), $proxmoxConfig)]);
+        }
+
+        // After the generic package above, so the template picked in the card wins.
+        if ($opennebulaConfig !== null) {
+            $product->update(['config_options' => array_merge($this->productConfig($product->fresh()), $opennebulaConfig)]);
         }
 
         // Panelica managed resources -> merged into config_options (preserves

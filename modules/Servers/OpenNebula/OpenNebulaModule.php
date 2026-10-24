@@ -17,10 +17,15 @@ use SimpleXMLElement;
  * root password. Reinstall and backups are not offered; vpsFeatures() leaves
  * them out and the panel hides them.
  *
- * The plan lives in the OpenNebula template, not in PNLCS: the product picks a
- * template as its "package" (listPackages() lists them), and CPU, memory,
- * disk, network and image come from it. Two attributes in the template's own
- * user template steer the panel:
+ * The product picks an OpenNebula template as its "package" (listPackages()
+ * lists them), and CPU, memory, disk, network and image come from it. The
+ * product page's OpenNebula card can change those on top of the template
+ * (vCPU, memory, boot disk size, virtual network, speed limit, security group,
+ * cluster and datastore; see OpenNebulaPlan), set how many snapshots the
+ * customer may keep and whether they may change the password, and offer the
+ * customer a choice of template, memory, vCPUs or disk at checkout. Two
+ * attributes in the VM's user template steer the panel, and a template may carry
+ * them itself when the card does not set them:
  *
  *   PNLCS_SNAPSHOTS="3"    snapshots a customer may keep (absent: none)
  *   PNLCS_PASSWORD="YES"   offer a root/administrator password change
@@ -241,26 +246,21 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
             return $this->buildResult(true, __('opennebula.linked', ['id' => $found]), ['vmid' => $found]);
         }
 
-        $template = (int) $this->getRemotePackage($service);
+        $plan = OpenNebulaPlan::forService($service);
+        $template = $plan->templateId();
         if ($template <= 0) {
             return $this->buildResult(false, __('opennebula.error.no_template'));
         }
 
-        $extra = self::MARK.'="'.$this->mark($service).'"';
-        $context = [];
-        if (! empty($service->username)) {
-            $context[] = 'USERNAME="'.addcslashes((string) $service->username, '"\\').'"';
+        // The template is read first: attributes sent with the instantiation
+        // replace the template's own of the same name, so the disks, network
+        // cards and context it already has are sent back with the changes.
+        $info = $api->call('one.template.info', [$template]);
+        $tpl = $info->ok ? OpenNebulaClient::xml($info->data) : null;
+        if (! $tpl) {
+            return $this->buildResult(false, $info->ok ? __('opennebula.error.not_xmlrpc') : $info->error);
         }
-        if ($service->password) {
-            $context[] = 'PASSWORD="'.addcslashes((string) $service->password, '"\\').'"';
-        }
-        if (($keys = trim($this->storedSshKeys($service))) !== '') {
-            $context[] = 'SSH_PUBLIC_KEY="'.addcslashes($keys, '"\\').'"';
-        }
-        // One CONTEXT block: a second would replace the first.
-        if ($context !== []) {
-            $extra .= "\nCONTEXT=[ ".implode(",\n  ", $context)." ]";
-        }
+        $extra = $this->instantiationFor($service, $plan, $tpl);
 
         $r = $api->call('one.template.instantiate', [$template, $this->vmName($service, $server), false, $extra, false]);
         $result = $this->buildResult($r->ok, $r->ok ? __('opennebula.created', ['id' => (int) $r->data]) : $r->error, $r->ok ? ['vmid' => (int) $r->data] : []);
@@ -270,6 +270,181 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
         $this->logAction($service, 'create', $result);
 
         return $result;
+    }
+
+    /**
+     * The attributes sent with the instantiation: the service's mark, what the
+     * plan changes (vCPU, memory, boot disk size, network card, placement), the
+     * panel switches, and the context the guest boots with.
+     */
+    public function instantiationFor(Service $service, OpenNebulaPlan $plan, SimpleXMLElement $tpl): string
+    {
+        $lines = [self::MARK.'="'.self::quote($this->mark($service)).'"'];
+
+        if ($plan->cores > 0) {
+            $lines[] = 'VCPU="'.$plan->cores.'"';
+        }
+        // The CPU share follows the vCPUs unless the product sets its own.
+        $cpu = $plan->cpu > 0 ? $plan->cpu : ($plan->cores > 0 ? (float) $plan->cores : 0.0);
+        if ($cpu > 0) {
+            $lines[] = 'CPU="'.rtrim(rtrim(number_format($cpu, 2, '.', ''), '0'), '.').'"';
+        }
+        if ($plan->memory > 0) {
+            $lines[] = 'MEMORY="'.$plan->memory.'"';
+        }
+
+        // Boot disk size: the first disk, in MB, the others as they are.
+        $disks = self::vectors($tpl->TEMPLATE->DISK ?? []);
+        if ($plan->disk > 0 && $disks !== []) {
+            $disks[0]['SIZE'] = (string) ($plan->disk * 1024);
+            foreach ($disks as $disk) {
+                $lines[] = self::vector('DISK', $disk);
+            }
+        }
+
+        // Network: the product's virtual network replaces the template's cards;
+        // the speed limit and security group go on every card that is sent.
+        $nics = $plan->network !== '' ? [['NETWORK_ID' => $plan->network]] : self::vectors($tpl->TEMPLATE->NIC ?? []);
+        if ($nics !== [] && ($plan->network !== '' || $plan->rate > 0 || $plan->secgroup !== '')) {
+            foreach ($nics as $nic) {
+                if ($plan->rate > 0) {
+                    $kb = (string) (int) round($plan->rate * 1024);
+                    $nic['INBOUND_AVG_BW'] = $nic['OUTBOUND_AVG_BW'] = $nic['INBOUND_PEAK_BW'] = $nic['OUTBOUND_PEAK_BW'] = $kb;
+                }
+                if ($plan->secgroup !== '') {
+                    $nic['SECURITY_GROUPS'] = $plan->secgroup;
+                }
+                $lines[] = self::vector('NIC', $nic);
+            }
+        }
+
+        if ($plan->cluster !== '') {
+            $lines[] = 'SCHED_REQUIREMENTS="'.self::quote('CLUSTER_ID="'.$plan->cluster.'"').'"';
+        }
+        if ($plan->datastore !== '') {
+            $lines[] = 'SCHED_DS_REQUIREMENTS="'.self::quote('ID="'.$plan->datastore.'"').'"';
+        }
+
+        // What the customer's panel offers, kept on the VM itself.
+        if ($plan->snapshots > 0) {
+            $lines[] = 'PNLCS_SNAPSHOTS="'.$plan->snapshots.'"';
+        }
+        if ($plan->password) {
+            $lines[] = 'PNLCS_PASSWORD="YES"';
+        }
+
+        // One CONTEXT block, starting from the template's own: a second block
+        // would replace the first, and the template's would be lost.
+        $context = self::vectors($tpl->TEMPLATE->CONTEXT ?? [])[0] ?? [];
+        $user = ! empty($service->username) ? (string) $service->username : $plan->ciuser;
+        if ($user !== '') {
+            $context['USERNAME'] = $user;
+        }
+        if ($service->password) {
+            $context['PASSWORD'] = (string) $service->password;
+        }
+        if (($keys = trim($this->storedSshKeys($service))) !== '') {
+            $context['SSH_PUBLIC_KEY'] = $keys;
+        }
+        if ($plan->nameserver !== '') {
+            $context['DNS'] = $plan->nameserver;
+        }
+        if ($context !== []) {
+            $lines[] = self::vector('CONTEXT', $context);
+        }
+
+        return implode("\n", $lines);
+    }
+
+    private static function quote(string $v): string
+    {
+        return addcslashes($v, '"\\');
+    }
+
+    /** NAME=[ KEY="value", ... ] */
+    private static function vector(string $name, array $attrs): string
+    {
+        $parts = [];
+        foreach ($attrs as $k => $v) {
+            $parts[] = $k.'="'.self::quote((string) $v).'"';
+        }
+
+        return $name.'=[ '.implode(",\n  ", $parts).' ]';
+    }
+
+    /**
+     * The vector attributes of a template node (every DISK, say) as arrays.
+     *
+     * @return array<int, array<string, string>>
+     */
+    private static function vectors(iterable $nodes): array
+    {
+        $out = [];
+        foreach ($nodes as $node) {
+            $one = [];
+            foreach ($node->children() as $child) {
+                $one[$child->getName()] = (string) $child;
+            }
+            if ($one !== []) {
+                $out[] = $one;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * What the product form offers to pick from: templates with their size,
+     * clusters, datastores, virtual networks and security groups. Anything the
+     * signed-in user may not list simply comes back empty.
+     *
+     * @return array{ok: bool, error?: string}&array<string, array>
+     */
+    public function catalog(Server $server): array
+    {
+        $api = $this->client($server);
+        $pool = $api->call('one.templatepool.info', [-2, -1, -1]);
+        if (! $pool->ok) {
+            return ['ok' => false, 'error' => $pool->error];
+        }
+
+        $list = function (string $method, array $args, string $node, ?callable $row = null) use ($api): array {
+            $r = $api->call($method, $args);
+            $xml = $r->ok ? OpenNebulaClient::xml($r->data) : null;
+            $out = [];
+            foreach ($xml?->{$node} ?? [] as $n) {
+                $out[] = $row ? $row($n) : ['id' => (string) $n->ID, 'name' => (string) $n->NAME];
+            }
+
+            return $out;
+        };
+
+        $templates = [];
+        foreach (OpenNebulaClient::xml($pool->data)?->VMTEMPLATE ?? [] as $t) {
+            $disk = 0;
+            foreach ($t->TEMPLATE->DISK ?? [] as $d) {
+                $disk += (int) ($d->SIZE ?? 0);
+            }
+            $templates[] = [
+                'id' => (string) $t->ID,
+                'name' => (string) $t->NAME,
+                'vcpu' => (int) ($t->TEMPLATE->VCPU ?? 0) ?: (int) ceil((float) ($t->TEMPLATE->CPU ?? 0)),
+                'memory' => (int) ($t->TEMPLATE->MEMORY ?? 0),
+                'disk' => (int) round($disk / 1024),
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'templates' => $templates,
+            'clusters' => $list('one.clusterpool.info', [], 'CLUSTER'),
+            // 0 = images, 1 = system: a placement choice is a system datastore.
+            'datastores' => $list('one.datastorepool.info', [], 'DATASTORE', fn ($n) => [
+                'id' => (string) $n->ID, 'name' => (string) $n->NAME, 'type' => (int) $n->TYPE,
+            ]),
+            'networks' => $list('one.vnpool.info', [-2, -1, -1], 'VNET'),
+            'secgroups' => $list('one.secgrouppool.info', [-2, -1, -1], 'SECURITY_GROUP'),
+        ];
     }
 
     /** The VM named for this service, when something else already built it. */

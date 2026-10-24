@@ -52,6 +52,16 @@ Schema::create('services', function ($t) {
     $t->timestamps();
 });
 
+// The plan reads the options a customer chose at checkout; none here.
+Schema::create('service_config_options', function ($t) {
+    $t->id();
+    $t->unsignedBigInteger('service_id');
+    $t->unsignedBigInteger('config_option_id')->nullable();
+    $t->unsignedBigInteger('config_option_sub_id')->nullable();
+    $t->integer('qty')->default(0);
+    $t->timestamps();
+});
+
 /** A fake oned: XML-RPC in, XML-RPC out, VMs kept in memory. */
 final class FakeOned
 {
@@ -114,7 +124,14 @@ final class FakeOned
 
         return match ($method) {
             'one.system.version' => $this->rpc(true, '6.10.0'),
-            'one.templatepool.info' => $this->rpc(true, '<VMTEMPLATE_POOL>'.collect($this->templates)->map(fn ($n, $id) => "<VMTEMPLATE><ID>$id</ID><NAME>$n</NAME></VMTEMPLATE>")->implode('').'</VMTEMPLATE_POOL>'),
+            'one.templatepool.info' => $this->rpc(true, '<VMTEMPLATE_POOL>'.collect($this->templates)->map(fn ($n, $id) => "<VMTEMPLATE><ID>$id</ID><NAME>$n</NAME>".$this->templateBody().'</VMTEMPLATE>')->implode('').'</VMTEMPLATE_POOL>'),
+            'one.template.info' => isset($this->templates[$params[0]])
+                ? $this->rpc(true, "<VMTEMPLATE><ID>{$params[0]}</ID><NAME>{$this->templates[$params[0]]}</NAME>".$this->templateBody().'</VMTEMPLATE>')
+                : $this->rpc(false, "[TemplateInfo] Error getting virtual machine template [{$params[0]}].", 0x0400),
+            'one.clusterpool.info' => $this->rpc(true, '<CLUSTER_POOL><CLUSTER><ID>100</ID><NAME>kvm-a</NAME></CLUSTER></CLUSTER_POOL>'),
+            'one.datastorepool.info' => $this->rpc(true, '<DATASTORE_POOL><DATASTORE><ID>0</ID><NAME>system</NAME><TYPE>1</TYPE></DATASTORE><DATASTORE><ID>1</ID><NAME>images</NAME><TYPE>0</TYPE></DATASTORE></DATASTORE_POOL>'),
+            'one.vnpool.info' => $this->rpc(true, '<VNET_POOL><VNET><ID>3</ID><NAME>lan</NAME></VNET><VNET><ID>4</ID><NAME>dmz</NAME></VNET></VNET_POOL>'),
+            'one.secgrouppool.info' => $this->rpc(true, '<SECURITY_GROUP_POOL><SECURITY_GROUP><ID>0</ID><NAME>default</NAME></SECURITY_GROUP></SECURITY_GROUP_POOL>'),
             'one.vmpool.info' => $this->rpc(true, '<VM_POOL>'.collect(array_keys($this->vms))->map(fn ($id) => $this->xml($id))->implode('').'</VM_POOL>'),
             'one.vm.info' => isset($this->vms[$params[0]]) ? $this->rpc(true, $this->xml($params[0])) : $this->rpc(false, "[VirtualMachineInfo] Error getting virtual machine [{$params[0]}].", 0x0400),
             'one.template.instantiate' => $this->instantiate($params),
@@ -126,6 +143,15 @@ final class FakeOned
             'one.vm.monitoring' => $this->rpc(true, $this->monitoring()),
             default => $this->rpc(false, "unknown method $method", 0x1000),
         };
+    }
+
+    /** What every fake template contains: sizes, two disks, one card, a context. */
+    private function templateBody(): string
+    {
+        return '<TEMPLATE><CPU>2</CPU><VCPU>2</VCPU><MEMORY>4096</MEMORY>'
+            .'<DISK><IMAGE_ID>7</IMAGE_ID><DRIVER>qcow2</DRIVER></DISK><DISK><IMAGE_ID>8</IMAGE_ID></DISK>'
+            .'<NIC><NETWORK_ID>3</NETWORK_ID></NIC>'
+            .'<CONTEXT><NETWORK>YES</NETWORK><SSH_PUBLIC_KEY>$USER[SSH_PUBLIC_KEY]</SSH_PUBLIC_KEY></CONTEXT></TEMPLATE>';
     }
 
     private function instantiate(array $p)
@@ -277,6 +303,51 @@ $vmid = $svc->fresh()->module_data['opennebula_vmid'] ?? null;
 check($vmid === 100, 'the VM id is kept in module_data');
 $again = $mod->create($svc->fresh()->setRelation('server', $server));
 check($again['success'] && count($one->sent('one.template.instantiate')) === 1, 'a second create does not build a second VM');
+
+section('Plan: sizes, network and placement');
+$plan = fn (array $cfg) => \Modules\Servers\OpenNebula\OpenNebulaPlan::forService(new Service, $cfg);
+check($plan(['package_name' => '10'])->templateId() === 10, 'the plan reads the template from package_name');
+check($plan(['one_template' => '11', 'package_name' => '10'])->templateId() === 11, 'one_template wins over package_name');
+check($plan(['package_name' => '866b0a94-43cc'])->templateId() === 0, 'a UUID left over from another module is not a template id');
+$tpl = simplexml_load_string('<VMTEMPLATE><TEMPLATE><CPU>2</CPU><VCPU>2</VCPU><MEMORY>4096</MEMORY><DISK><IMAGE_ID>7</IMAGE_ID></DISK><DISK><IMAGE_ID>8</IMAGE_ID></DISK><NIC><NETWORK_ID>3</NETWORK_ID></NIC><CONTEXT><NETWORK>YES</NETWORK></CONTEXT></TEMPLATE></VMTEMPLATE>');
+$svc2 = newService($server, 31);
+$xtra = $mod->instantiationFor($svc2, $plan(['one_template' => '10']), $tpl);
+check(! str_contains($xtra, 'VCPU=') && ! str_contains($xtra, 'MEMORY=') && ! str_contains($xtra, 'DISK=') && ! str_contains($xtra, 'NIC='), 'an empty plan leaves sizes, disks and cards to the template');
+check(str_contains($xtra, 'CONTEXT=[ NETWORK="YES"') && str_contains($xtra, 'USERNAME="vdiuser"'), 'the template\'s own context is kept and the user added');
+$xtra = $mod->instantiationFor($svc2, $plan(['one_template' => '10', 'one_cores' => 4, 'one_memory' => 8192, 'one_disk' => 80, 'one_network' => '4', 'one_rate' => 10, 'one_secgroup' => '0', 'one_cluster' => '100', 'one_datastore' => '0', 'one_snapshots' => 3, 'one_password' => 1, 'one_nameserver' => '1.1.1.1']), $tpl);
+check(str_contains($xtra, 'VCPU="4"') && str_contains($xtra, 'CPU="4"') && str_contains($xtra, 'MEMORY="8192"'), 'vCPU, CPU share (following the vCPUs) and memory are sent');
+check(str_contains($xtra, 'DISK=[ IMAGE_ID="7",') && str_contains($xtra, 'SIZE="81920"') && str_contains($xtra, 'DISK=[ IMAGE_ID="8" ]'), 'the boot disk is resized (GB to MB) and the other disk is sent back unchanged');
+check(substr_count($xtra, 'NIC=') === 1 && str_contains($xtra, 'NETWORK_ID="4"') && str_contains($xtra, 'INBOUND_AVG_BW="10240"') && str_contains($xtra, 'SECURITY_GROUPS="0"'), 'the chosen network replaces the card, with the speed limit (MB/s to KB/s) and security group');
+check(str_contains($xtra, 'SCHED_REQUIREMENTS="CLUSTER_ID=\\"100\\""') && str_contains($xtra, 'SCHED_DS_REQUIREMENTS="ID=\\"0\\""'), 'cluster and datastore become scheduler requirements');
+check(str_contains($xtra, 'PNLCS_SNAPSHOTS="3"') && str_contains($xtra, 'PNLCS_PASSWORD="YES"') && str_contains($xtra, 'DNS="1.1.1.1"'), 'panel switches and DNS are sent');
+check(substr_count($xtra, 'CONTEXT=') === 1, 'still one CONTEXT block');
+$xtra = $mod->instantiationFor($svc2, $plan(['one_template' => '10', 'one_rate' => 5]), $tpl);
+check(str_contains($xtra, 'NIC=[ NETWORK_ID="3"') && str_contains($xtra, 'INBOUND_AVG_BW="5120"'), 'a speed limit alone is put on the template\'s own card');
+$one->calls = [];
+$svc3 = newService($server, 32);
+$svc3->setRelation('product', (object) ['config_options' => json_encode(['one_template' => '10', 'one_cores' => 4, 'one_memory' => 8192])]);
+$r = $mod->create($svc3);
+$inst = $one->sent('one.template.instantiate')[0] ?? null;
+check($r['success'] && $inst && str_contains($inst[1][3], 'VCPU="4"') && str_contains($inst[1][3], 'MEMORY="8192"'), 'create sends the plan with the instantiation');
+check(count($one->sent('one.template.info')) === 1, 'the template is read once, for its disks, cards and context');
+$svc4 = newService($server, 33);
+$svc4->setRelation('product', (object) ['config_options' => json_encode(['package_name' => '866b0a94-43cc'])]);
+$r = $mod->create($svc4);
+check($r['success'] === false && str_contains($r['message'], 'no OpenNebula template'), 'a product with a UUID instead of a template id says so');
+$svc5 = newService($server, 34);
+$svc5->setRelation('product', (object) ['config_options' => json_encode(['one_template' => '999'])]);
+$r = $mod->create($svc5);
+check($r['success'] === false && str_contains($r['message'], 'Error getting virtual machine template [999]'), 'a template that does not exist is reported by OpenNebula\'s own message');
+
+section('Catalog for the product form');
+$cat = $mod->catalog($server);
+check($cat['ok'] && count($cat['templates']) === 2 && $cat['templates'][0] === ['id' => '10', 'name' => 'Win11-VDI', 'vcpu' => 2, 'memory' => 4096, 'disk' => 0], 'templates come with their vCPU, memory and disk');
+check($cat['clusters'] === [['id' => '100', 'name' => 'kvm-a']] && $cat['networks'][1] === ['id' => '4', 'name' => 'dmz'] && $cat['secgroups'] === [['id' => '0', 'name' => 'default']], 'clusters, networks and security groups are listed');
+check(collect($cat['datastores'])->where('type', 1)->count() === 1, 'datastores carry their type so only system ones are offered');
+$one->badLogin = true;
+$bad = $mod->catalog($server);
+check($bad['ok'] === false && $bad['error'] !== '', 'a refused login is reported, not hidden');
+$one->badLogin = false;
 
 section('Panel: features and status');
 $svc = $svc->fresh()->setRelation('server', $server);
