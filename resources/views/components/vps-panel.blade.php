@@ -73,6 +73,7 @@
     .vps-kpi{padding:16px 20px;border-inline-start:1px solid var(--vps-line);min-width:0}
     .vps-kpi:first-child{border-inline-start:none}
     .vps-kpi .l{font-size:11px;font-weight:700;color:var(--vps-muted);text-transform:uppercase;letter-spacing:.5px}
+    .vps [hidden]{display:none !important}
     .vps-kpi .v{font-size:20px;font-weight:800;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
     .vps-kpi .v small{font-size:12px;color:var(--vps-muted);font-weight:600}
     .vps-kpi .s{font-size:12px;color:var(--vps-muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -156,6 +157,9 @@
             <div class="vps-state"><span class="vps-dot" id="vps-dot"></span><span id="vps-state">{{ __('proxmox.client.loading') }}</span></div>
             <div class="vps-sub" id="vps-sub">&nbsp;</div>
         </div>
+        @if($has('connect'))
+        <div class="vps-btns"><a class="vps-btn primary" id="vps-connect" href="#" target="_blank" rel="noopener" hidden>{!! $svg('external') !!}{{ __('proxmox.client.connect') }}</a></div>
+        @endif
         @if($has('power'))
         <div class="vps-btns">
             @foreach($powerButtons as $action => $style)
@@ -449,6 +453,11 @@
                     ? s.addresses.map(function (ip) { return '<button type="button" class="vps-chip" data-copy="' + esc(ip) + '" title="' + esc(T.copy) + '">' + esc(ip) + '</button>'; }).join('')
                     : '<span style="color:var(--vps-muted);font-weight:600">' + esc(T.no_address) + '</span>';
                 $('vps-os').textContent = s.image || '-';
+                var connect = $('vps-connect');
+                if (connect) {
+                    var ok = /^https?:\/\//i.test(s.connect_url || '');
+                    connect.hidden = !ok; if (ok) { connect.href = s.connect_url; }
+                }
                 setButtons(s.status, s.lock);
             })
             .catch(function () { $('vps-state').textContent = T.unavailable; $('vps-dot').className = 'vps-dot off'; });

@@ -262,7 +262,7 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
         }
         $extra = $this->instantiationFor($service, $plan, $tpl);
 
-        $r = $api->call('one.template.instantiate', [$template, $this->vmName($service, $server), false, $extra, false]);
+        $r = $api->call('one.template.instantiate', [$template, $this->vmName($service, $server), false, $extra, $plan->persistent]);
         $result = $this->buildResult($r->ok, $r->ok ? __('opennebula.created', ['id' => (int) $r->data]) : $r->error, $r->ok ? ['vmid' => (int) $r->data] : []);
         if ($r->ok) {
             $this->setModuleData($service, ['opennebula_vmid' => (int) $r->data, 'opennebula_template' => $template]);
@@ -611,6 +611,9 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
         }
 
         $features = ['status', 'power', 'graphs'];
+        if (OpenNebulaPlan::forService($service)->connect_url !== '') {
+            $features[] = 'connect';
+        }
         $vm = $this->vm($service);
         if (is_array($vm)) {
             if ((int) $this->attr($vm['xml'], 'PNLCS_SNAPSHOTS') > 0) {
@@ -682,6 +685,8 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
             $addresses[] = trim($ip, '"');
         }
 
+        $addresses = array_values(array_unique($addresses));
+
         return [
             'available' => true,
             'vmid' => $vm['id'],
@@ -698,7 +703,8 @@ class OpenNebulaModule extends AbstractServerModule implements VpsModuleInterfac
             'disk' => ['used' => null, 'max' => round($diskMb / 1024, 1), 'fs_size' => null],
             'net' => ['in' => (int) ($x->MONITORING->NETRX ?? 0), 'out' => (int) ($x->MONITORING->NETTX ?? 0)],
             'agent' => false,
-            'addresses' => array_values(array_unique($addresses)),
+            'addresses' => $addresses,
+            'connect_url' => OpenNebulaPlan::forService($service)->connectUrl($vm['id'], (string) $x->NAME, (string) ($addresses[0] ?? ''), (int) $service->id),
             'image' => $this->attr($x, 'PNLCS_OS') ?: (string) ($x->TEMPLATE->DISK[0]->IMAGE ?? ''),
             'last_error' => '',
         ];

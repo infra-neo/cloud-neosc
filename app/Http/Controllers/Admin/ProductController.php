@@ -319,6 +319,7 @@ class ProductController extends Controller
             'one_nameserver' => 'nullable|string|max:255',
             'one_ciuser' => ['nullable', 'regex:/^[A-Za-z_][A-Za-z0-9_.-]{0,31}$/'],
             'one_snapshots' => 'nullable|integer|min:0|max:50',
+            'one_connect_url' => ['nullable', 'max:500', 'regex:#^https?://[^\s"<>]+$#i'],
         ]);
 
         return [
@@ -336,6 +337,8 @@ class ProductController extends Controller
             'one_ciuser' => (string) ($v['one_ciuser'] ?? ''),
             'one_snapshots' => (int) ($v['one_snapshots'] ?? 0),
             'one_password' => $request->boolean('one_password') ? 1 : 0,
+            'one_persistent' => $request->boolean('one_persistent') ? 1 : 0,
+            'one_connect_url' => (string) ($v['one_connect_url'] ?? ''),
         ] + (($v['one_template'] ?? '') === '' ? [] : [
             // The one key every module reads for the plan a product sells.
             'package_name' => $v['one_template'],

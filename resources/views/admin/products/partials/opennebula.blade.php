@@ -107,6 +107,10 @@
                     <small style="color:#888;">{{ __('opennebula.product.ciuser_hint') }}</small>
                 </div>
             </div>
+            <div class="pve-checks">
+                <label><input type="checkbox" name="one_persistent" value="1" @checked((bool) $one('persistent', 0))> {{ __('opennebula.product.persistent') }}</label>
+            </div>
+            <div style="font-size:12px;color:#777;margin-bottom:12px;">{{ __('opennebula.product.persistent_hint') }}</div>
         </div>
 
         {{-- 3. Network --}}
@@ -145,6 +149,13 @@
                 <div class="form-group pve-span2">
                     <label class="form-label" for="one-snapshots">{{ __('opennebula.product.snapshots') }}</label>
                     <input id="one-snapshots" type="number" min="0" max="50" name="one_snapshots" value="{{ $one('snapshots', 0) }}" class="form-control" data-one-sum>
+                </div>
+            </div>
+            <div class="pve-grid" style="margin-top:6px;">
+                <div class="form-group pve-span2">
+                    <label class="form-label" for="one-connect">{{ __('opennebula.product.connect_url') }}</label>
+                    <input id="one-connect" type="url" name="one_connect_url" value="{{ $one('connect_url', '') }}" class="form-control" placeholder="https://portal.example.com">
+                    <small style="color:#888;">{{ __('opennebula.product.connect_hint') }}</small>
                 </div>
             </div>
             <div class="pve-checks">

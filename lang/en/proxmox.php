@@ -275,6 +275,7 @@ return [
     ],
 
     'client' => [
+        'connect' => 'Connect',
         'title' => 'Virtual server',
         'loading' => 'Checking...',
         'unavailable' => 'Status not available',

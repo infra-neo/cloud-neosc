@@ -45,6 +45,8 @@ final class OpenNebulaPlan
             'ciuser' => trim((string) $pick('ciuser', [], '')),
             'snapshots' => max(0, (int) $pick('snapshots', [], 0)),
             'password' => (bool) $pick('password', [], false),
+            'persistent' => (bool) $pick('persistent', [], false),
+            'connect_url' => self::link($pick('connect_url', [], '')),
         ];
 
         foreach (self::chosenOptions($service) as $key => $value) {
@@ -71,6 +73,24 @@ final class OpenNebulaPlan
         $cfg = is_string($raw) ? json_decode($raw, true) : $raw;
 
         return is_array($cfg) ? $cfg : [];
+    }
+
+    /** The link behind the panel's Connect button: http(s) only, or nothing. */
+    public static function link(mixed $value): string
+    {
+        $value = trim((string) $value);
+
+        return preg_match('#^https?://[^\s"<>]+$#i', $value) ? $value : '';
+    }
+
+    /** The Connect link with {vmid}, {name}, {ip} and {service} filled in for one VM. */
+    public function connectUrl(int $vmid, string $name, string $ip, int $serviceId): string
+    {
+        $url = (string) $this->values['connect_url'];
+
+        return $url === '' ? '' : strtr($url, [
+            '{vmid}' => (string) $vmid, '{name}' => rawurlencode($name), '{ip}' => rawurlencode($ip), '{service}' => (string) $serviceId,
+        ]);
     }
 
     /** An OpenNebula object id kept as a string: digits only, anything else is "not set". */
