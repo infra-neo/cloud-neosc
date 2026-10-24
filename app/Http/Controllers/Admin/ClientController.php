@@ -415,7 +415,7 @@ class ClientController extends Controller
         if (! $provision && ($linkUserId = trim((string) $request->input('link_user_id'))) !== '') {
             // A virtual server is linked by tagging the guest for this service.
             $module = $service->server ? app(ModuleRegistry::class)->getServerModule($service->server->type) : null;
-            if ($module instanceof \Modules\Servers\Proxmox\ProxmoxModule) {
+            if ($module instanceof \App\Contracts\VpsModuleInterface) {
                 $claimed = $module->claim($service, (int) $linkUserId);
 
                 return redirect()->route('admin.clients.show', ['client' => $client, 'tab' => 'services'])

@@ -43,9 +43,11 @@ class ServiceController extends Controller
 
         $vpsFeatures = [];
         $reinstallChoices = [];
+        $isVps = false;
         if ($module = $this->proxmox($service)) {
+            $isVps = true;
             $vpsFeatures = $module->vpsFeatures($service);
-            $reinstallChoices = \Modules\Servers\Proxmox\ProxmoxPlan::forService($service)->reinstallChoices();
+            $reinstallChoices = $module->reinstallChoices($service);
         }
 
         // For the edit form.
@@ -72,7 +74,7 @@ class ServiceController extends Controller
             ->latest('id')
             ->first();
 
-        return view('admin.services.show', compact('service', 'availableAddons', 'vpsFeatures', 'reinstallChoices', 'products', 'cycles', 'productFields', 'moduleScreen', 'pendingSetup'));
+        return view('admin.services.show', compact('service', 'availableAddons', 'isVps', 'vpsFeatures', 'reinstallChoices', 'products', 'cycles', 'productFields', 'moduleScreen', 'pendingSetup'));
     }
 
     /**
@@ -132,7 +134,7 @@ class ServiceController extends Controller
             'changepassword' => $this->provisioning->changePassword($service, $request->get('password', '')),
             'pve_start', 'pve_shutdown', 'pve_reboot', 'pve_stop', 'pve_reset' => $this->proxmox($service)?->power($service, substr($action, 4))
                 ?? ['success' => false, 'message' => __('admin.messages.unknown_action', ['action' => $action])],
-            'pve_claim' => $this->proxmox($service)?->claim($service, (int) $request->validate(['vmid' => 'required|integer|min:100'])['vmid'])
+            'pve_claim' => $this->proxmox($service)?->claim($service, (int) $request->validate(['vmid' => 'required|integer|min:0'])['vmid'])
                 ?? ['success' => false, 'message' => __('admin.messages.unknown_action', ['action' => $action])],
             // A button the module itself offers (customFunctions()); its own
             // message says what happened.
@@ -151,11 +153,11 @@ class ServiceController extends Controller
         return back()->with('error', $result['message'] ?? __('admin.messages.module_action_failed'));
     }
 
-    private function proxmox(Service $service): ?\Modules\Servers\Proxmox\ProxmoxModule
+    private function proxmox(Service $service): ?\App\Contracts\VpsModuleInterface
     {
         $module = $this->provisioning->resolveModule($service);
 
-        return $module instanceof \Modules\Servers\Proxmox\ProxmoxModule ? $module : null;
+        return $module instanceof \App\Contracts\VpsModuleInterface ? $module : null;
     }
 
     /**

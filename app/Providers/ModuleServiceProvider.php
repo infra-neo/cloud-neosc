@@ -42,6 +42,9 @@ class ModuleServiceProvider extends ServiceProvider
                 $registry->registerServer("proxmox", \Modules\Servers\Proxmox\ProxmoxModule::class);
             }
 
+            // OpenNebula module (KVM VMs with the same virtual server panel as Proxmox)
+            $registry->registerServer("opennebula", \Modules\Servers\OpenNebula\OpenNebulaModule::class);
+
             // HestiaCP module
             $registry->registerServer("hestiacp", \Modules\Servers\HestiaCP\HestiaCPModule::class);
             // aaPanel module (Sub aaPanel accounts)

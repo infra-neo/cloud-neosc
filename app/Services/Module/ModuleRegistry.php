@@ -232,7 +232,7 @@ class ModuleRegistry
     {
         return match (self::key((string) $type)) {
             'cpanel', 'panelica', 'plesk', 'proxmox', 'vultr', 'aapanel' => 'token',
-            'directadmin', 'hestiacp' => 'either',
+            'directadmin', 'hestiacp', 'opennebula' => 'either',
             default => 'none',
         };
     }

@@ -266,14 +266,13 @@
 <div style="margin-bottom:15px;">{{ $moduleScreen['panel'] }}</div>
 @endif
 
-@if(strtolower((string) ($service->server?->type ?? $service->product?->server_type)) === 'proxmox')
-@php $pveData = $service->module_data ?? []; @endphp
+@if(! empty($isVps))
 <div style="margin-bottom:15px;" id="pve-admin">
     <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 10px;">
         <strong style="font-size:15px;">{{ __('proxmox.admin.vm_title') }}</strong>
-        @if(empty($pveData['proxmox_vmid']))<span style="font-size:12px;color:#666;">{{ __('proxmox.admin.no_vm') }}</span>@endif
+        @if(empty($vpsFeatures))<span style="font-size:12px;color:#666;">{{ __('proxmox.admin.no_vm') }}</span>@endif
     </div>
-    @if(!empty($pveData['proxmox_vmid']))
+    @if(!empty($vpsFeatures))
     @php
         $vpsUrls = [];
         foreach (['status', 'graphs', 'power', 'password', 'reinstall', 'snapshots', 'backups'] as $name) {

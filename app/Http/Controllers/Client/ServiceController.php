@@ -74,9 +74,9 @@ class ServiceController extends Controller
         $reinstallChoices = [];
         if ($service->server_id && in_array(strtolower((string) $service->status), ['active', 'suspended'], true)) {
             $module = app(ProvisioningService::class)->resolveModule($service);
-            if ($module && method_exists($module, 'vpsFeatures')) {
+            if ($module instanceof \App\Contracts\VpsModuleInterface) {
                 $vpsFeatures = $module->vpsFeatures($service);
-                $reinstallChoices = \Modules\Servers\Proxmox\ProxmoxPlan::forService($service)->reinstallChoices();
+                $reinstallChoices = $module->reinstallChoices($service);
             }
         }
 

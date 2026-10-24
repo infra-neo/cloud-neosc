@@ -10,8 +10,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
-use Modules\Servers\Proxmox\ProxmoxModule;
-use Modules\Servers\Proxmox\ProxmoxPlan;
+use App\Contracts\VpsModuleInterface;
 
 /**
  * The virtual server endpoints behind the VPS panel. The customer's page and
@@ -21,7 +20,7 @@ use Modules\Servers\Proxmox\ProxmoxPlan;
 trait ServesVps
 {
     /** The module for a service the caller may see ($forChange = false) or change. */
-    abstract protected function vpsModule(Service $service, bool $forChange): ProxmoxModule;
+    abstract protected function vpsModule(Service $service, bool $forChange): VpsModuleInterface;
 
     abstract protected function vpsActor(): ?string;
 
@@ -39,7 +38,7 @@ trait ServesVps
     {
         $module = $this->vpsModule($service, true);
         $action = (string) $request->validate([
-            'action' => ['required', Rule::in(ProxmoxModule::CLIENT_POWER_ACTIONS)],
+            'action' => ['required', Rule::in($module::CLIENT_POWER_ACTIONS)],
         ])['action'];
 
         $result = $module->power($service, $action);
@@ -68,7 +67,7 @@ trait ServesVps
     public function reinstall(Request $request, Service $service): JsonResponse
     {
         $module = $this->vpsModule($service, true);
-        $choices = collect(ProxmoxPlan::forService($service)->reinstallChoices())->pluck('id')->all();
+        $choices = collect($module->reinstallChoices($service))->pluck('id')->all();
 
         $request->validate([
             'image' => ['required', 'string', Rule::in($choices)],
@@ -82,7 +81,7 @@ trait ServesVps
         // removes them.
         $sshKeys = null;
         if ($request->has('ssh_keys')) {
-            $sshKeys = ProxmoxModule::normaliseSshKeys($request->input('ssh_keys'));
+            $sshKeys = $module::normaliseSshKeys($request->input('ssh_keys'));
             if ($sshKeys === null) {
                 throw ValidationException::withMessages(['ssh_keys' => __('proxmox.client.ssh_keys_invalid')]);
             }
@@ -98,7 +97,7 @@ trait ServesVps
 
         $password = (string) $request->input('password') ?: Str::password(16, symbols: false);
         $result = $module->reinstall($service, (string) $request->input('image'), $password);
-        $this->vpsAudit($service, 'VPS reinstalled with '.ProxmoxPlan::imageName((string) $request->input('image')), $result['success']);
+        $this->vpsAudit($service, 'VPS reinstalled with '.$module->imageName((string) $request->input('image')), $result['success']);
 
         if ($result['success']) {
             $result['data'] = ['password' => $password];
@@ -109,10 +108,11 @@ trait ServesVps
 
     public function snapshots(Service $service): JsonResponse
     {
-        $list = $this->vpsModule($service, false)->snapshots($service);
+        $module = $this->vpsModule($service, false);
+        $list = $module->snapshots($service);
 
         return response()->json(is_array($list)
-            ? ['available' => true, 'snapshots' => $list, 'limit' => ProxmoxPlan::forService($service)->snapshots]
+            ? ['available' => true, 'snapshots' => $list, 'limit' => $module->snapshotLimit($service)]
             : ['available' => false, 'error' => $list->error]);
     }
 
@@ -121,7 +121,7 @@ trait ServesVps
         $module = $this->vpsModule($service, true);
         $v = $request->validate([
             'action' => 'required|in:create,rollback,delete',
-            'name' => ['required', 'string', 'regex:'.ProxmoxModule::SNAPSHOT_NAME],
+            'name' => ['required', 'string', 'regex:'.$module::SNAPSHOT_NAME],
             'description' => 'nullable|string|max:200',
         ]);
 
@@ -137,10 +137,11 @@ trait ServesVps
 
     public function backups(Service $service): JsonResponse
     {
-        $list = $this->vpsModule($service, false)->backups($service);
+        $module = $this->vpsModule($service, false);
+        $list = $module->backups($service);
 
         return response()->json(is_array($list)
-            ? ['available' => true, 'backups' => $list, 'limit' => ProxmoxPlan::forService($service)->backups]
+            ? ['available' => true, 'backups' => $list, 'limit' => $module->backupLimit($service)]
             : ['available' => false, 'error' => $list->error]);
     }
 

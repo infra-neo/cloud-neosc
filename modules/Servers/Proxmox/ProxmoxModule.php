@@ -18,7 +18,7 @@ use Modules\Servers\AbstractServerModule;
  * stale VM id in the billing records can never touch a guest the operator runs
  * for other reasons.
  */
-class ProxmoxModule extends AbstractServerModule
+class ProxmoxModule extends AbstractServerModule implements \App\Contracts\VpsModuleInterface
 {
     use Concerns\ManagesBackups;
     use Concerns\ManagesSnapshots;
@@ -1414,6 +1414,26 @@ class ProxmoxModule extends AbstractServerModule
     public function catalog(Server $server, ?string $node = null): array
     {
         return (new ProxmoxCatalog($this->client($server)))->all($node ?: self::configuredNode($server));
+    }
+
+    public function reinstallChoices(Service $service): array
+    {
+        return ProxmoxPlan::forService($service)->reinstallChoices();
+    }
+
+    public function imageName(string $image): string
+    {
+        return ProxmoxPlan::imageName($image);
+    }
+
+    public function snapshotLimit(Service $service): int
+    {
+        return (int) ProxmoxPlan::forService($service)->snapshots;
+    }
+
+    public function backupLimit(Service $service): int
+    {
+        return (int) ProxmoxPlan::forService($service)->backups;
     }
 
     /** Features the client area shows for this service. */

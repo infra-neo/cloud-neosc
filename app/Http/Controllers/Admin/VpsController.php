@@ -6,7 +6,7 @@ use App\Http\Controllers\Concerns\ServesVps;
 use App\Http\Controllers\Controller;
 use App\Models\Service;
 use App\Services\ProvisioningService;
-use Modules\Servers\Proxmox\ProxmoxModule;
+use App\Contracts\VpsModuleInterface;
 
 /**
  * The same virtual server panel the customer has, for staff. Staff may also
@@ -17,13 +17,13 @@ class VpsController extends Controller
 {
     use ServesVps;
 
-    protected function vpsModule(Service $service, bool $forChange): ProxmoxModule
+    protected function vpsModule(Service $service, bool $forChange): VpsModuleInterface
     {
         $status = strtolower((string) $service->status);
         abort_if($forChange && ! in_array($status, ['active', 'suspended'], true), 409, __('proxmox.client.not_active'));
 
         $module = $service->server_id ? app(ProvisioningService::class)->resolveModule($service) : null;
-        abort_unless($module instanceof ProxmoxModule, 404);
+        abort_unless($module instanceof VpsModuleInterface, 404);
 
         return $module;
     }
