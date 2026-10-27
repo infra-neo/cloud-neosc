@@ -109,8 +109,9 @@
                             {{-- Only the cycles the product is sold on, so the first one
                                  really is the one that comes up selected. --}}
                             @foreach($pricedCycles as $cycle => $cyclePrice)
-                                <label class="cycle-option {{ $loop->first ? 'selected' : '' }}">
-                                    <input type="radio" name="billing_cycle" value="{{ $cycle }}" data-price="{{ display_price($cyclePrice) }}" {{ $loop->first ? 'checked' : '' }}
+                                @php $cycleOn = (string) old('billing_cycle', array_key_first($pricedCycles)) === (string) $cycle; @endphp
+                                <label class="cycle-option {{ $cycleOn ? 'selected' : '' }}">
+                                    <input type="radio" name="billing_cycle" value="{{ $cycle }}" data-price="{{ display_price($cyclePrice) }}" {{ $cycleOn ? 'checked' : '' }}
                                         onchange="document.querySelectorAll('.cycle-option').forEach(e=>e.classList.remove('selected')); this.closest('.cycle-option').classList.add('selected')">
                                     @if($product->pay_type === 'free')
                                         {{-- Free: no price to read. The cycle is named only when

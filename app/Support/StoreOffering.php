@@ -118,4 +118,42 @@ final class StoreOffering
 
         return $specs === [] ? $product->resourceSummary() : $specs;
     }
+
+    /**
+     * What the store's configurator needs to price one product in the browser:
+     * its cycles, and each option the customer can change, in the shape the
+     * order form posts them back.
+     *
+     * @param  iterable  $groups  the product's option groups with options, subs and pricing loaded
+     * @param  array<string, float>  $cycles  cycle => base price, as shown to the customer
+     * @return array{cycles: array<string, float>, options: list<array<string, mixed>>}
+     */
+    public static function configurator(iterable $groups, array $cycles): array
+    {
+        $price = fn (?float $v) => round((float) display_price($v ?? 0), 2);
+        $options = [];
+
+        foreach ($groups as $group) {
+            foreach ($group->options as $option) {
+                if ($option->subs->isEmpty()) {
+                    continue;
+                }
+                $per = fn ($sub) => collect($cycles)->map(fn ($p, $c) => $price($sub->priceFor($c)))->all();
+
+                if ($option->isQuantity()) {
+                    $unit = $option->subs->first();
+                    $options[] = ['id' => $option->id, 'name' => $option->displayName(), 'type' => 'quantity',
+                        'min' => (int) ($option->qty_minimum ?? 0), 'max' => (int) ($option->qty_maximum ?? 0), 'prices' => $per($unit)];
+                } elseif ($option->isCheckbox()) {
+                    $sub = $option->subs->first();
+                    $options[] = ['id' => $option->id, 'name' => $option->displayName(), 'type' => 'checkbox', 'label' => $sub->displayName(), 'prices' => $per($sub)];
+                } else {
+                    $options[] = ['id' => $option->id, 'name' => $option->displayName(), 'type' => 'choice',
+                        'subs' => $option->subs->map(fn ($sub) => ['id' => $sub->id, 'label' => $sub->displayName(), 'prices' => $per($sub)])->values()->all()];
+                }
+            }
+        }
+
+        return ['cycles' => collect($cycles)->map(fn ($p) => $price($p))->all(), 'options' => $options];
+    }
 }

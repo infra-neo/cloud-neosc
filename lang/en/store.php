@@ -19,6 +19,7 @@ return [
     'reset' => 'Clear filters',
     'pills' => ['Zero Trust access', 'Any browser', 'Multi-cloud'],
     'provider_group' => ['public' => 'Public clouds', 'private' => 'Private clouds', 'hypervisor' => 'Hypervisors', 'container' => 'Containers'],
+    'wiz' => ['s1' => 'Choose where and what', 's2' => 'Select a product', 's3' => 'Customize your server', 'inc' => 'Plan includes', 'total' => 'Total recurring', 'order' => 'Order', 'cycle' => 'Billing cycle', 'none_opt' => 'This plan has nothing to adjust.', 'free' => 'Free', 'kind_any' => 'Any type'],
     'kind' => [
         'vdi-persistent' => [
             'name' => 'Persistent desktops',

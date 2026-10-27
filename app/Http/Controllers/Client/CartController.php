@@ -54,7 +54,19 @@ class CartController extends Controller
 
         $currency = Currency::getDefault();
 
-        return view('client.cart.store', compact('groups', 'currency'));
+        // What the store's configurator needs to price each product in the browser.
+        $configurator = [];
+        foreach ($groups as $group) {
+            foreach ($group->products as $product) {
+                $cycles = $product->pricedCycles($currency?->id);
+                $configurator[$product->id] = \App\Support\StoreOffering::configurator(
+                    app(ConfigOptionService::class)->groupsFor($product),
+                    $cycles,
+                );
+            }
+        }
+
+        return view('client.cart.store', compact('groups', 'currency', 'configurator'));
     }
 
     public function configure(Request $request, Product $product)
@@ -66,6 +78,29 @@ class CartController extends Controller
         $cycles = $this->cartService->getAvailableCycles($product);
         $currency = Currency::getDefault();
         $optionGroups = app(ConfigOptionService::class)->groupsFor($product);
+
+        // The store's configurator hands over what the customer picked there
+        // (?cycle=monthly&opt[12]=34), so the order form opens already set.
+        // Only this product's own cycles and options are taken; the form
+        // still checks everything again when it is submitted.
+        if ($request->filled('cycle') || $request->filled('opt')) {
+            $preset = [];
+            $cycle = (string) $request->query('cycle', '');
+            if ($cycle !== '' && in_array($cycle, array_keys($product->pricedCycles($currency?->id)), true)) {
+                $preset['billing_cycle'] = $cycle;
+            }
+            $wanted = (array) $request->query('opt', []);
+            foreach ($optionGroups as $group) {
+                foreach ($group->options as $option) {
+                    if (isset($wanted[$option->id]) && is_scalar($wanted[$option->id]) && ctype_digit((string) $wanted[$option->id])) {
+                        $preset['config_options'][$option->id] = (string) $wanted[$option->id];
+                    }
+                }
+            }
+            if ($preset !== [] && ! $request->session()->hasOldInput()) {
+                $request->session()->flashInput($preset);
+            }
+        }
         $addons = app(AddonService::class)->availableFor($product);
 
         // Products that sell "pick your app" show the catalogue on the order

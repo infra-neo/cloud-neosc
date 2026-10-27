@@ -19,6 +19,7 @@ return [
     'reset' => 'Quitar filtros',
     'pills' => ['Acceso Zero Trust', 'Desde cualquier navegador', 'Multi-nube'],
     'provider_group' => ['public' => 'Nubes públicas', 'private' => 'Nubes privadas', 'hypervisor' => 'Hipervisores', 'container' => 'Contenedores'],
+    'wiz' => ['s1' => 'Elige dónde y qué', 's2' => 'Selecciona un producto', 's3' => 'Personaliza tu servidor', 'inc' => 'El plan incluye', 'total' => 'Total recurrente', 'order' => 'Ordenar', 'cycle' => 'Ciclo de facturación', 'none_opt' => 'Este plan no tiene nada que ajustar.', 'free' => 'Gratis', 'kind_any' => 'Cualquier tipo'],
     'kind' => [
         'vdi-persistent' => [
             'name' => 'Escritorios persistentes',
