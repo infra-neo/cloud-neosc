@@ -158,6 +158,22 @@
                     <small style="color:#888;">{{ __('opennebula.product.connect_hint') }}</small>
                 </div>
             </div>
+            <div class="pve-grid" style="margin-top:6px;">
+                <div class="form-group">
+                    <label class="form-label" for="nsc-kind">{{ __('store.admin.kind') }}</label>
+                    <select id="nsc-kind" name="nsc_kind" class="form-control">
+                        <option value="">{{ __('store.admin.auto') }}</option>
+                        @foreach(array_keys(\App\Support\StoreOffering::KINDS) as $k)
+                        <option value="{{ $k }}" @selected($one('nsc_kind', '') === $k)>{{ __("store.kind.$k.name") }}</option>
+                        @endforeach
+                    </select>
+                    <small style="color:#888;">{{ __('store.admin.kind_hint') }}</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="nsc-gpu">{{ __('store.admin.gpu') }}</label>
+                    <input id="nsc-gpu" type="text" maxlength="60" name="nsc_gpu" value="{{ $one('nsc_gpu', '') }}" class="form-control" placeholder="NVIDIA L4 24 GB">
+                </div>
+            </div>
             <div class="pve-checks">
                 <label><input type="checkbox" name="one_password" value="1" @checked((bool) $one('password', 0))> {{ __('opennebula.product.password') }}</label>
             </div>
