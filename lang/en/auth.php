@@ -91,4 +91,6 @@ return [
     'user_not_found' => 'User not found.',
     'username' => 'Username',
     'username_placeholder' => 'Enter your username',
+    'welcome_to' => 'Welcome to',
+    'new_user' => 'New user?',
 ];

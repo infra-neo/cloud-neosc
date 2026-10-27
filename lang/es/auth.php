@@ -87,4 +87,6 @@ return [
     'user_not_found' => 'No se encontró el usuario.',
     'username' => 'Nombre de usuario',
     'username_placeholder' => 'Introduzca su nombre de usuario',
+    'welcome_to' => 'Bienvenido a',
+    'new_user' => '¿Usuario nuevo?',
 ];

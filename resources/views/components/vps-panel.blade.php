@@ -149,9 +149,44 @@
         .vps-btns{width:100%}
         .vps-btns .vps-btn{flex:1 1 calc(33% - 8px)}
     }
+    /* Overview in the style of a classic hosting panel: a monitor showing the system, rings for the load. */
+    .vps-hero{display:grid;grid-template-columns:200px minmax(0,1fr);gap:8px 22px;align-items:center;padding:20px 20px 6px;background:linear-gradient(180deg,var(--vps-soft),var(--vps-card))}
+    .vps-hero .vps-head{padding:0}
+    .vps-mon{display:flex;flex-direction:column;align-items:center}
+    .vps-screen{width:168px;height:108px;border-radius:9px 9px 3px 3px;border:5px solid #1e293b;border-bottom-width:7px;background:linear-gradient(135deg,#38bdf8,#2563eb 55%,#1e3a8a);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#fff;box-shadow:0 12px 24px -12px rgba(15,23,42,.5);overflow:hidden}
+    .vps-screen svg{width:34px;height:34px}
+    .vps-screen span{font-size:11px;font-weight:700;max-width:150px;text-align:center;line-height:1.25;opacity:.95}
+    .vps-stand{width:34px;height:12px;background:#cbd5e1;border-radius:0 0 4px 4px}
+    .vps-foot{width:76px;height:6px;background:#94a3b8;border-radius:99px}
+    .vps-ring{--p:0;width:74px;height:74px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+        background:conic-gradient(var(--vps-ring,var(--vps-accent)) calc(var(--p)*1%),var(--vps-line) 0)}
+    .vps-ring b{width:58px;height:58px;border-radius:50%;background:var(--vps-card);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:800;font-variant-numeric:tabular-nums}
+    .vps-kpi.ringed{display:grid;grid-template-columns:74px minmax(0,1fr);gap:0 14px;align-items:center}
+    .vps-kpi.ringed .l{grid-column:2}
+    .vps-kpi.ringed .vps-ring{grid-column:1;grid-row:1 / span 3}
+    .vps-kpi.ringed .v,.vps-kpi.ringed .s{grid-column:2}
+    .vps-kpi.ringed .vps-bar{display:none}
+    .vps-kpi.ringed .v{font-size:16px;margin-top:3px}
+    .vps-ostiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px;margin-top:4px}
+    .vps-ostile{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 8px;border:1px solid var(--vps-line);border-radius:12px;background:var(--vps-card);color:var(--vps-text);font:inherit;font-size:12px;font-weight:700;cursor:pointer;text-align:center;line-height:1.25;transition:border-color .15s,box-shadow .15s,transform .15s}
+    .vps-ostile:hover{border-color:var(--vps-accent);transform:translateY(-1px)}
+    .vps-ostile.on{border-color:var(--vps-accent);box-shadow:0 0 0 3px var(--vps-accent-soft);background:var(--vps-accent-soft)}
+    .vps-osmark{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:800;letter-spacing:-.3px}
+    .vps-osmark svg{width:22px;height:22px}
+    @media (max-width:520px){
+        .vps-kpi.ringed{grid-template-columns:1fr;justify-items:start;gap:6px}
+        .vps-kpi.ringed .l,.vps-kpi.ringed .v,.vps-kpi.ringed .s,.vps-kpi.ringed .vps-ring{grid-column:1;grid-row:auto}
+        .vps-ring{width:60px;height:60px}.vps-ring b{width:46px;height:46px;font-size:11.5px}
+    }
+    @media (max-width:860px){.vps-hero{grid-template-columns:minmax(0,1fr);justify-items:center}.vps-hero .vps-head{width:100%}}
 </style>
 
 <div class="vps{{ $admin ? ' vps-admin' : '' }}" id="vps" data-can-change="{{ $canChange ? 1 : 0 }}">
+    <div class="vps-hero">
+        <div class="vps-mon" aria-hidden="true">
+            <div class="vps-screen"><span id="vps-os-svg"></span><span id="vps-os-lbl">&nbsp;</span></div>
+            <div class="vps-stand"></div><div class="vps-foot"></div>
+        </div>
     <div class="vps-head">
         <div style="min-width:0">
             <div class="vps-state"><span class="vps-dot" id="vps-dot"></span><span id="vps-state">{{ __('proxmox.client.loading') }}</span></div>
@@ -168,6 +203,7 @@
         </div>
         @endif
     </div>
+    </div>
     <div class="vps-note" id="vps-msg" role="status" aria-live="polite"></div>
     <div class="vps-note" id="vps-job"></div>
     @unless($canChange)
@@ -175,9 +211,9 @@
     @endunless
 
     <div class="vps-kpis">
-        <div class="vps-kpi"><div class="l">{{ __('proxmox.client.cpu') }}</div><div class="v" id="vps-cpu">&hellip;</div><div class="vps-bar"><i id="vps-cpu-bar"></i></div><div class="s" id="vps-cpu-s">&nbsp;</div></div>
-        <div class="vps-kpi"><div class="l">{{ __('proxmox.client.memory') }}</div><div class="v" id="vps-mem">&hellip;</div><div class="vps-bar"><i id="vps-mem-bar"></i></div><div class="s" id="vps-mem-s">&nbsp;</div></div>
-        <div class="vps-kpi"><div class="l">{{ __('proxmox.client.disk') }}</div><div class="v" id="vps-disk">&hellip;</div><div class="vps-bar" id="vps-disk-track"><i id="vps-disk-bar"></i></div><div class="s" id="vps-disk-s">&nbsp;</div></div>
+        <div class="vps-kpi ringed"><div class="vps-ring" data-bar="vps-cpu-bar" data-val="vps-cpu"><b></b></div><div class="l">{{ __('proxmox.client.cpu') }}</div><div class="v" id="vps-cpu">&hellip;</div><div class="vps-bar"><i id="vps-cpu-bar"></i></div><div class="s" id="vps-cpu-s">&nbsp;</div></div>
+        <div class="vps-kpi ringed"><div class="vps-ring" data-bar="vps-mem-bar" data-val="vps-mem"><b></b></div><div class="l">{{ __('proxmox.client.memory') }}</div><div class="v" id="vps-mem">&hellip;</div><div class="vps-bar"><i id="vps-mem-bar"></i></div><div class="s" id="vps-mem-s">&nbsp;</div></div>
+        <div class="vps-kpi ringed"><div class="vps-ring" data-bar="vps-disk-bar" data-val="vps-disk"><b></b></div><div class="l">{{ __('proxmox.client.disk') }}</div><div class="v" id="vps-disk">&hellip;</div><div class="vps-bar" id="vps-disk-track"><i id="vps-disk-bar"></i></div><div class="s" id="vps-disk-s">&nbsp;</div></div>
         <div class="vps-kpi"><div class="l">{{ __('proxmox.client.uptime') }}</div><div class="v" id="vps-uptime">&hellip;</div><div class="vps-bar ghost"><i></i></div><div class="s" id="vps-uptime-s">&nbsp;</div></div>
     </div>
 
@@ -280,6 +316,7 @@
                 <h4>{!! $svg('reinstall') !!}{{ __('proxmox.client.reinstall_title') }}</h4>
                 <p class="hint">{{ __('proxmox.client.reinstall_hint') }}</p>
                 <label for="vps-image">{{ __('proxmox.client.os') }}</label>
+                <div class="vps-ostiles" id="vps-ostiles" hidden></div>
                 <select id="vps-image" name="image" required>
                     @foreach($choices as $choice)
                     <option value="{{ $choice['id'] }}">{{ $choice['name'] }}</option>
@@ -734,5 +771,68 @@
     refresh();
     lists();
     setInterval(function () { if (!busy && !document.hidden) { refresh(); } }, 15000);
+})();
+</script>
+
+<script>
+// Presentation only: the rings, the monitor and the system tiles read what the panel
+// already draws, so the panel's own script stays the one source of numbers.
+(function () {
+    var root = document.getElementById('vps'); if (!root) { return; }
+    var $ = function (id) { return document.getElementById(id); };
+    var WIN = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10.5 4.5v6.8H3zM11.5 4.4 21 3v8.3h-9.5zM3 12.7h7.5v6.8L3 18.5zM11.5 12.7H21V21l-9.5-1.4z"/></svg>';
+    var FAMILY = [
+        [/windows|win\s?\d|server\s?20/i, 'Windows', '#0078d4', WIN],
+        [/ubuntu/i, 'Ubuntu', '#e95420'], [/debian/i, 'Debian', '#a80030'], [/centos/i, 'CentOS', '#932279'],
+        [/rocky/i, 'Rocky', '#10b981'], [/alma/i, 'Alma', '#0f4266'], [/fedora/i, 'Fedora', '#3c6eb4'],
+        [/alpine/i, 'Alpine', '#0d597f'], [/arch/i, 'Arch', '#1793d1'], [/freebsd|bsd/i, 'BSD', '#ab2b28']
+    ];
+    function family(name) {
+        for (var i = 0; i < FAMILY.length; i++) { if (FAMILY[i][0].test(name)) { return FAMILY[i]; } }
+        return [null, (name || '?').slice(0, 2).toUpperCase(), '#64748b'];
+    }
+    function mark(name, cls) {
+        var f = family(name), m = document.createElement('span'); m.className = cls; m.style.background = f[2];
+        if (f[3]) { m.innerHTML = f[3]; } else { m.textContent = f[1].slice(0, 2); }
+        return m;
+    }
+
+    // rings follow the bars the panel moves
+    root.querySelectorAll('.vps-ring').forEach(function (ring) {
+        var bar = $(ring.getAttribute('data-bar')), val = $(ring.getAttribute('data-val')), lab = ring.querySelector('b');
+        if (!bar) { return; }
+        function sync() {
+            var p = parseFloat(bar.style.width) || 0;
+            ring.style.setProperty('--p', p);
+            ring.style.setProperty('--vps-ring', bar.style.background || '');
+            lab.textContent = p > 0 ? Math.round(p) + '%' : '';
+        }
+        new MutationObserver(sync).observe(bar, { attributes: true, attributeFilter: ['style'] }); sync();
+    });
+
+    // monitor shows the system the panel reports
+    var os = $('vps-os');
+    function osSync() {
+        var name = (os && os.textContent || '').trim();
+        if (!name || name === '-' || name === '\u2026') { return; }
+        $('vps-os-lbl').textContent = name;
+        var holder = $('vps-os-svg'); holder.textContent = ''; var f = family(name);
+        if (f[3]) { holder.innerHTML = f[3]; holder.firstChild.style.cssText = 'width:34px;height:34px'; }
+    }
+    if (os) { new MutationObserver(osSync).observe(os, { childList: true, characterData: true, subtree: true }); osSync(); }
+
+    // system picker for the reinstall form
+    var sel = $('vps-image'), box = $('vps-ostiles');
+    if (sel && box && sel.options.length) {
+        Array.prototype.forEach.call(sel.options, function (o) {
+            var b = document.createElement('button'); b.type = 'button'; b.className = 'vps-ostile'; b.dataset.v = o.value;
+            b.appendChild(mark(o.textContent, 'vps-osmark')); b.appendChild(document.createTextNode(o.textContent.trim()));
+            b.addEventListener('click', function () { sel.value = o.value; paint(); });
+            box.appendChild(b);
+        });
+        function paint() { box.querySelectorAll('.vps-ostile').forEach(function (b) { b.classList.toggle('on', b.dataset.v === sel.value); }); }
+        sel.addEventListener('change', paint); paint();
+        box.hidden = false; sel.hidden = true; sel.style.display = 'none';
+    }
 })();
 </script>
