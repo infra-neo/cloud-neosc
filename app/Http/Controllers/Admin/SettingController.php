@@ -96,6 +96,7 @@ class SettingController extends Controller
         'OpenAIApiKey', 'OpenAIModel',
         'GoogleLoginEnabled', 'GoogleClientId', 'GoogleClientSecret',
         'GithubLoginEnabled', 'GithubClientId', 'GithubClientSecret',
+        'ZitadelLoginEnabled', 'ZitadelIssuer', 'ZitadelClientId', 'ZitadelClientSecret', 'ZitadelAutoRegister',
         // Google reCAPTCHA, read through App\Services\RecaptchaService: one
         // switch per guarded form (contact, signed-in ticket form, account
         // opening, sign-in, password reset) and one pair of keys they share.
@@ -212,6 +213,9 @@ class SettingController extends Controller
         }
         if (trim((string) ($data['GithubClientSecret'] ?? '')) === '') {
             unset($data['GithubClientSecret']);
+        }
+        if (trim((string) ($data['ZitadelClientSecret'] ?? '')) === '') {
+            unset($data['ZitadelClientSecret']);
         }
         if (trim((string) ($data['RecaptchaSecretKey'] ?? '')) === '') {
             unset($data['RecaptchaSecretKey']);

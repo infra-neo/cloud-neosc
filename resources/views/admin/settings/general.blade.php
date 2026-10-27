@@ -255,6 +255,34 @@
                 {{ __('admin.settings.github_login_hint') }}
                 <code>{{ route('client.social.github.callback') }}</code>
             </div>
+
+            <hr style="margin:14px 0;">
+            <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <input type="hidden" name="ZitadelLoginEnabled" value="0"><input type="checkbox" name="ZitadelLoginEnabled" value="1" {{ !empty($settings['ZitadelLoginEnabled']) ? 'checked' : '' }}>
+                {{ __('admin.settings.zitadel_login_enabled') }}
+            </label>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-top:8px;">
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.settings.zitadel_issuer') }}</label>
+                    <input type="url" name="ZitadelIssuer" value="{{ $settings['ZitadelIssuer'] ?? '' }}" class="form-control" autocomplete="off" placeholder="https://id.example.com">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.settings.zitadel_client_id') }}</label>
+                    <input type="text" name="ZitadelClientId" value="{{ $settings['ZitadelClientId'] ?? '' }}" class="form-control" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">{{ __('admin.settings.zitadel_client_secret') }}</label>
+                    <input type="password" name="ZitadelClientSecret" value="" class="form-control" autocomplete="new-password" placeholder="{{ !empty($settings['ZitadelClientSecret']) ? '••••••••' : '' }}">
+                </div>
+            </div>
+            <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:4px;">
+                <input type="hidden" name="ZitadelAutoRegister" value="0"><input type="checkbox" name="ZitadelAutoRegister" value="1" {{ !empty($settings['ZitadelAutoRegister']) ? 'checked' : '' }}>
+                {{ __('admin.settings.zitadel_auto_register') }}
+            </label>
+            <div style="font-size:12px;color:#777;margin-top:8px;">
+                {{ __('admin.settings.zitadel_login_hint') }}
+                <code>{{ route('client.social.zitadel.callback') }}</code>
+            </div>
         </div>
     </div>
 

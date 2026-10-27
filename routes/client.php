@@ -63,6 +63,11 @@ Route::prefix('client')->name('client.')->middleware(['banned.ip', 'client.permi
         ->middleware('throttle:20,1')->name('social.github.redirect');
     Route::get('auth/github/callback', [\App\Http\Controllers\Client\GithubLoginController::class, 'callback'])
         ->middleware('throttle:20,1')->name('social.github.callback');
+    // The operator's own identity provider (Zitadel); 404 until it is set up.
+    Route::get('auth/zitadel', [\App\Http\Controllers\Client\ZitadelLoginController::class, 'redirect'])
+        ->middleware('throttle:20,1')->name('social.zitadel.redirect');
+    Route::get('auth/zitadel/callback', [\App\Http\Controllers\Client\ZitadelLoginController::class, 'callback'])
+        ->middleware('throttle:20,1')->name('social.zitadel.callback');
 
     // Password Reset
     Route::get('forgot-password', [AuthController::class, 'showForgotPassword'])->name('password.request');
