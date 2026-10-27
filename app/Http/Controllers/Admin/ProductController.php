@@ -322,6 +322,7 @@ class ProductController extends Controller
             'one_connect_url' => ['nullable', 'max:500', 'regex:#^https?://[^\s"<>]+$#i'],
             'nsc_kind' => ['nullable', 'in:'.implode(',', array_keys(\App\Support\StoreOffering::KINDS))],
             'nsc_gpu' => 'nullable|string|max:60',
+            'nsc_provider' => ['nullable', 'regex:/^[a-z0-9_-]{0,30}$/'],
         ]);
 
         return [
@@ -344,6 +345,7 @@ class ProductController extends Controller
             // How the store page files this product; blank lets it work it out.
             'nsc_kind' => (string) ($v['nsc_kind'] ?? ''),
             'nsc_gpu' => trim((string) ($v['nsc_gpu'] ?? '')),
+            'nsc_provider' => (string) ($v['nsc_provider'] ?? ''),
         ] + (($v['one_template'] ?? '') === '' ? [] : [
             // The one key every module reads for the plan a product sells.
             'package_name' => $v['one_template'],

@@ -26,6 +26,46 @@ final class StoreOffering
         'other' => ['icon' => 'ri-server-line', 'tone' => 'gray'],
     ];
 
+    /**
+     * Where an offer runs. "module" is the server module key a product sells
+     * through; a tile with no product yet is shown as coming soon rather than
+     * promised. Order is the order the store shows them.
+     */
+    public const PROVIDERS = [
+        'public' => [
+            'vultr' => ['name' => 'Vultr', 'module' => 'vultr', 'color' => '#007bfc', 'mark' => 'V'],
+            'gcp' => ['name' => 'Google Cloud', 'module' => 'gcp', 'color' => '#4285f4', 'mark' => 'G'],
+            'oracle' => ['name' => 'Oracle Cloud', 'module' => 'oracle', 'color' => '#f80000', 'mark' => 'O'],
+            'huawei' => ['name' => 'Huawei Cloud', 'module' => 'huawei', 'color' => '#cf0a2c', 'mark' => 'H'],
+        ],
+        'private' => [
+            'opennebula' => ['name' => 'OpenNebula', 'module' => 'opennebula', 'color' => '#0098c3', 'mark' => 'ON'],
+        ],
+        'hypervisor' => [
+            'proxmox' => ['name' => 'Proxmox VE', 'module' => 'proxmox', 'color' => '#e57000', 'mark' => 'PX'],
+            'lxd' => ['name' => 'LXD', 'module' => 'lxd', 'color' => '#e95420', 'mark' => 'LX'],
+        ],
+        'container' => [
+            'docker' => ['name' => 'Docker', 'module' => 'docker', 'color' => '#2496ed', 'mark' => 'D'],
+        ],
+    ];
+
+    /** The provider key a product runs on: set on the product, else from its server module, else "other". */
+    public static function provider(Product $product): string
+    {
+        $set = (string) (self::config($product)['nsc_provider'] ?? '');
+        $module = strtolower((string) $product->server_type);
+        foreach (self::PROVIDERS as $items) {
+            foreach ($items as $key => $meta) {
+                if ($set === $key || ($set === '' && $module === $meta['module'])) {
+                    return $key;
+                }
+            }
+        }
+
+        return 'other';
+    }
+
     public static function config(Product $product): array
     {
         $raw = $product->config_options;

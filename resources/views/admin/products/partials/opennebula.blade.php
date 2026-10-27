@@ -170,6 +170,17 @@
                     <small style="color:#888;">{{ __('store.admin.kind_hint') }}</small>
                 </div>
                 <div class="form-group">
+                    <label class="form-label" for="nsc-provider">{{ __('store.admin.provider') }}</label>
+                    <select id="nsc-provider" name="nsc_provider" class="form-control">
+                        <option value="">{{ __('store.admin.auto_provider') }}</option>
+                        @foreach(\App\Support\StoreOffering::PROVIDERS as $items)
+                        @foreach($items as $pk => $pm)
+                        <option value="{{ $pk }}" @selected($one('nsc_provider', '') === $pk)>{{ $pm['name'] }}</option>
+                        @endforeach
+                        @endforeach
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label" for="nsc-gpu">{{ __('store.admin.gpu') }}</label>
                     <input id="nsc-gpu" type="text" maxlength="60" name="nsc_gpu" value="{{ $one('nsc_gpu', '') }}" class="form-control" placeholder="NVIDIA L4 24 GB">
                 </div>

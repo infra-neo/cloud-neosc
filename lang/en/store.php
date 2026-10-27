@@ -8,7 +8,17 @@ return [
     'configure' => 'Choose',
     'empty_kind' => 'Nothing here yet.',
     'spec' => ['cores' => ':n vCPU'],
-    'admin' => ['kind' => 'Store section', 'auto' => 'Automatic (from the persistent setting)', 'kind_hint' => 'Where this product appears on the store page.', 'gpu' => 'GPU shown on the card (optional)'],
+    'admin' => ['provider' => 'Platform on the store page', 'auto_provider' => 'Automatic (from the server module)', 'kind' => 'Store section', 'auto' => 'Automatic (from the persistent setting)', 'kind_hint' => 'Where this product appears on the store page.', 'gpu' => 'GPU shown on the card (optional)'],
+    'where' => 'Where it runs',
+    'where_sub' => 'Pick the platform; you can mix several.',
+    'any_platform' => 'Any platform',
+    'soon' => 'Soon',
+    'live' => 'Available',
+    'what' => 'What you need',
+    'no_match' => 'Nothing matches this combination yet.',
+    'reset' => 'Clear filters',
+    'pills' => ['Zero Trust access', 'Any browser', 'Multi-cloud'],
+    'provider_group' => ['public' => 'Public clouds', 'private' => 'Private clouds', 'hypervisor' => 'Hypervisors', 'container' => 'Containers'],
     'kind' => [
         'vdi-persistent' => [
             'name' => 'Persistent desktops',
