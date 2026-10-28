@@ -1,3 +1,51 @@
 <?php
-// TODO: Translate to ES
-return array_map(fn ($v) => $v, require __DIR__ . "/../en/client.php");
+// Spanish overrides for the sign-up wizard. Everything else still mirrors
+// English until the full ES translation is done.
+$client = require __DIR__ . "/../en/client.php";
+
+$client['auth'] = array_merge($client['auth'], [
+    'address' => 'Dirección',
+    'address_line_2' => 'Dirección (línea 2)',
+    'back' => 'Atrás',
+    'back_to_site' => 'Volver al sitio',
+    'billing_address' => 'Dirección de facturación',
+    'billing_address_hint' => 'Tus facturas se emiten a esta dirección.',
+    'city' => 'Ciudad',
+    'continue' => 'Continuar',
+    'country' => 'País',
+    'create_your_account' => 'Crea tu cuenta',
+    'create_account' => 'Crear cuenta',
+    'already_have_account' => '¿Ya tienes una cuenta?',
+    'sign_in' => 'Iniciar sesión',
+    'err_email' => 'Ingresa un correo electrónico válido.',
+    'err_password_match' => 'Las contraseñas no coinciden.',
+    'err_password_min' => 'La contraseña debe tener al menos 8 caracteres.',
+    'err_required' => 'Completa este campo.',
+    'err_tos' => 'Debes aceptar los Términos de servicio y la Política de privacidad.',
+    'hide' => 'Ocultar',
+    'logout' => 'Cerrar sesión',
+    'mail_verify_button' => 'Confirmar correo electrónico',
+    'mail_verify_fallback' => 'Si el botón no funciona, copia y pega esta URL en tu navegador:',
+    'mail_verify_ignore' => 'Si no creaste esta cuenta, puedes ignorar este correo.',
+    'mail_verify_intro' => 'Confirma que :email es tu correo electrónico para terminar de configurar tu cuenta. El enlace es válido por 24 horas.',
+    'mail_verify_subject' => 'Confirma tu correo electrónico de :company',
+    'password_hint' => 'mínimo 8 caracteres',
+    'postal_code' => 'Código postal',
+    'show' => 'Mostrar',
+    'side_point_1' => 'Escritorios remotos seguros, listos en minutos',
+    'side_point_2' => 'Una sola cuenta para facturación, soporte y acceso',
+    'side_point_3' => 'Inicio de sesión único en todos tus servicios',
+    'side_title' => 'Tu espacio de trabajo, donde sea',
+    'verify_change_email' => 'Cambiar dirección y reenviar',
+    'verify_continue' => 'Continuar a mi cuenta',
+    'verify_done' => '¡Listo! Tu correo electrónico quedó confirmado.',
+    'verify_heading' => 'Confirma tu correo electrónico',
+    'verify_resend' => 'Enviar de nuevo',
+    'verify_resent' => 'Te enviamos un nuevo enlace de confirmación.',
+    'verify_sent_to' => 'Enviamos un enlace de confirmación a',
+    'verify_title' => 'Confirma tu correo',
+    'verify_valid_24h' => 'El enlace es válido por 24 horas. Revisa la carpeta de spam si no llega en unos minutos.',
+    'verify_wrong_address' => '¿La dirección es incorrecta? Cámbiala',
+]);
+
+return $client;

@@ -219,9 +219,14 @@ class AuthController extends Controller
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
             'company_name' => 'nullable|string|max:255',
-            'address1' => 'nullable|string|max:255',
-            'city' => 'nullable|string|max:255',
-            'country' => 'nullable|string|max:2',
+            // The sign-up wizard (hidden `wizard` field) collects a billing
+            // address as its second step; the older callers that post only
+            // identity fields keep working, so these are required only then.
+            'address1' => 'required_with:wizard|nullable|string|max:255',
+            'address2' => 'nullable|string|max:255',
+            'city' => 'required_with:wizard|nullable|string|max:255',
+            'postcode' => 'required_with:wizard|nullable|string|max:20',
+            'country' => ['required_with:wizard', 'nullable', 'string', 'size:2', \Illuminate\Validation\Rule::in(array_keys(\App\Support\Countries::ALL))],
             'phone_number' => 'nullable|string|max:30',
             'tos' => 'required|accepted',
         ]);
@@ -239,7 +244,10 @@ class AuthController extends Controller
 
         Auth::login($user);
 
-        return redirect()->route('client.home');
+        // Last step of the wizard: ask them to confirm the address.
+        EmailVerificationController::send($user);
+
+        return redirect()->route('client.verification.notice');
     }
 
     public function logout(Request $request)

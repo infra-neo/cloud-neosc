@@ -9,6 +9,7 @@ use App\Http\Controllers\Client\ContactController;
 use App\Http\Controllers\Client\DomainController;
 use App\Http\Controllers\Client\DownloadController;
 use App\Http\Controllers\Client\EmailController;
+use App\Http\Controllers\Client\EmailVerificationController;
 use App\Http\Controllers\Client\FundsController;
 use App\Http\Controllers\Client\HomeController;
 use App\Http\Controllers\Client\InvoiceController;
@@ -30,6 +31,16 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
     // Signing up makes an account and sends mail; the contact form next to
     // it has been counted all along.
     Route::post('register', [AuthController::class, 'register'])->middleware('throttle:5,1')->name('register.submit');
+
+    // Email confirmation (last step of the sign-up wizard). The signed link
+    // is open to any browser; the page and its actions need the session.
+    Route::get('verify-email/{id}/{hash}', [EmailVerificationController::class, 'verify'])
+        ->middleware(['signed', 'throttle:20,1'])->whereNumber('id')->name('verification.verify');
+    Route::middleware('auth')->withoutMiddleware([TwoFactorVerify::class])->group(function () {
+        Route::get('verify-email', [EmailVerificationController::class, 'notice'])->name('verification.notice');
+        Route::post('verify-email/resend', [EmailVerificationController::class, 'resend'])->middleware('throttle:3,1')->name('verification.resend');
+        Route::post('verify-email/change', [EmailVerificationController::class, 'changeEmail'])->middleware('throttle:5,1')->name('verification.change');
+    });
 
     // Password Reset
     Route::get('forgot-password', [AuthController::class, 'showForgotPassword'])->name('password.request');

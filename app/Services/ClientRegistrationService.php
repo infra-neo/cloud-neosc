@@ -40,7 +40,9 @@ class ClientRegistrationService
             'email' => $validated['email'],
             'company_name' => $validated['company_name'] ?? null,
             'address1' => $validated['address1'] ?? null,
+            'address2' => $validated['address2'] ?? null,
             'city' => $validated['city'] ?? null,
+            'postcode' => $validated['postcode'] ?? null,
             'country' => $validated['country'] ?? 'US',
             'phone_number' => $validated['phone_number'] ?? null,
         ]);
