@@ -42,7 +42,10 @@ class WelcomeController extends Controller
             ? $this->showcaseApps()
             : [];
 
-        return view('welcome', compact('products', 'domainPricing', 'sections', 'sectionContent', 'currency', 'apps'));
+        // The NeoSC landing replaces the section-driven page; ?classic=1 shows the old one.
+        $page = view()->exists('neosc.landing') && ! request()->boolean('classic') ? 'neosc.landing' : 'welcome';
+
+        return view($page, compact('products', 'domainPricing', 'sections', 'sectionContent', 'currency', 'apps'));
     }
 
     /**
