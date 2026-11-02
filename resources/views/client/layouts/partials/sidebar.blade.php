@@ -34,6 +34,7 @@
         ]],
         ['key' => 'organization', 'items' => [
             ['client.account.profile', 'client.account.profile', __('client.nav.edit_profile')],
+            ['client.organization.index', 'client.organization.*', __('portal.org.nav')],
             ['client.account.contacts', 'client.account.contacts', __('client.nav.contacts')],
             ['client.account.security', 'client.account.security', __('client.nav.security')],
             ['client.branding.edit', 'client.branding.*', __('portal.brand.nav')],

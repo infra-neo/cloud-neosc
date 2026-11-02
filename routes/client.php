@@ -244,6 +244,15 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::get('account/payment-methods', [AccountController::class, 'paymentMethods'])->name('account.payment_methods');
         Route::get('account/security', [AccountController::class, 'security'])->name('account.security');
         // Personalización: the customer's own portal branding.
+        // Organización: departamentos, usuarios y roles (sincronizados con NeoGuard).
+        Route::get('organization', [\App\Http\Controllers\Client\OrganizationController::class, 'index'])->name('organization.index');
+        Route::post('organization/departments', [\App\Http\Controllers\Client\OrganizationController::class, 'storeDepartment'])->name('organization.departments.store');
+        Route::delete('organization/departments/{department}', [\App\Http\Controllers\Client\OrganizationController::class, 'destroyDepartment'])->name('organization.departments.destroy');
+        Route::post('organization/members', [\App\Http\Controllers\Client\OrganizationController::class, 'storeMember'])->name('organization.members.store');
+        Route::put('organization/members/{member}', [\App\Http\Controllers\Client\OrganizationController::class, 'updateMember'])->name('organization.members.update');
+        Route::post('organization/members/{member}/resync', [\App\Http\Controllers\Client\OrganizationController::class, 'resync'])->name('organization.members.resync');
+        Route::post('organization/members/{member}/toggle', [\App\Http\Controllers\Client\OrganizationController::class, 'toggleMember'])->name('organization.members.toggle');
+        Route::delete('organization/members/{member}', [\App\Http\Controllers\Client\OrganizationController::class, 'destroyMember'])->name('organization.members.destroy');
         Route::get('account/branding', [BrandingController::class, 'edit'])->name('branding.edit');
         Route::put('account/branding', [BrandingController::class, 'update'])->name('branding.update');
         Route::post('account/branding/verify-domain', [BrandingController::class, 'verifyDomain'])->middleware('throttle:10,1')->name('branding.verify');
