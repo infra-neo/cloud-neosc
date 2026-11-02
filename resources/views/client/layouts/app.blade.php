@@ -14,16 +14,6 @@
     @if(!empty($themeCssVars))
     <style id="theme-vars">{!! $themeCssVars !!}</style>
     @endif
-    @auth
-    @php $nscBrand = \App\Support\ClientBrand::forCurrent(); @endphp
-    @if(\App\Support\ClientBrand::cssVars($nscBrand) !== '')
-    <style id="nsc-brand">{!! \App\Support\ClientBrand::cssVars($nscBrand) !!}</style>
-    @endif
-    @if($nscBrand['favicon'] !== '')
-    <link rel="icon" href="{{ $nscBrand['favicon'] }}">
-    @endif
-    @include('client.layouts.partials.shell-styles')
-    @endauth
     <style>
         *{box-sizing:border-box;margin:0;padding:0}
         :root{
@@ -325,6 +315,16 @@
         :root[data-theme="dark"] .badge-suspended, :root[data-theme="dark"] .badge-terminated,
         :root[data-theme="dark"] .badge-cancelled, :root[data-theme="dark"] .badge-closed { background:#1e293b !important; color:var(--muted) !important; }
     </style>
+    @auth
+    @php $nscBrand = \App\Support\ClientBrand::forCurrent(); @endphp
+    @if(\App\Support\ClientBrand::cssVars($nscBrand) !== '')
+    <style id="nsc-brand">{!! \App\Support\ClientBrand::cssVars($nscBrand) !!}</style>
+    @endif
+    @if($nscBrand['favicon'] !== '')
+    <link rel="icon" href="{{ $nscBrand['favicon'] }}">
+    @endif
+    @include('client.layouts.partials.shell-styles')
+    @endauth
     @yield("styles")
 
     @if(($textDirection ?? 'ltr') === 'rtl')

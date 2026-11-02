@@ -65,6 +65,7 @@
         @foreach($nscGroups as $group)
             <div class="nsc-grp">{{ __('portal.group.'.$group['key']) }}</div>
             @foreach($group['items'] as [$route, $pattern, $label])
+                @continue(! \Illuminate\Support\Facades\Route::has($route))
                 <a href="{{ route($route) }}" class="{{ request()->routeIs($pattern) ? 'active' : '' }}" @if(request()->routeIs($pattern)) aria-current="page" @endif>{{ $label }}</a>
             @endforeach
         @endforeach
