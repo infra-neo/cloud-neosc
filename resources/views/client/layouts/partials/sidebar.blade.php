@@ -13,6 +13,7 @@
         ]],
         ['key' => 'services', 'items' => [
             ['client.services.index', 'client.services.*', __('client.nav.my_services')],
+            ['client.wizard.servers', 'client.wizard.*', __('portal.wizard.nav')],
             ['client.store', 'client.store*', __('client.nav.order_new_service')],
             ['client.domains.index', 'client.domains.*', __('client.nav.my_domains')],
             ['client.ssl.index', 'client.ssl.*', __('client.nav.ssl')],

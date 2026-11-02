@@ -21,6 +21,7 @@ use App\Http\Controllers\Client\QuoteController;
 use App\Http\Controllers\Client\ServiceController;
 use App\Http\Controllers\Client\SslController;
 use App\Http\Controllers\Client\TicketController;
+use App\Http\Controllers\Client\WizardController;
 use App\Http\Controllers\DomainSearchController;
 use App\Http\Middleware\TwoFactorVerify;
 use Illuminate\Support\Facades\Route;
@@ -75,6 +76,8 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
     // Store — public browsing
     Route::get('store', [CartController::class, 'store'])->name('store');
     Route::get('store/configure/{product:slug}', [CartController::class, 'configure'])->name('store.configure');
+    // Step-by-step order wizard for servers; it finishes in the stock cart.add.
+    Route::get('wizard/servers', [WizardController::class, 'servers'])->name('wizard.servers');
 
     // Cart and checkout are open to visitors: the account is opened AT
     // checkout, not before it. The old shape - configure a product, press
