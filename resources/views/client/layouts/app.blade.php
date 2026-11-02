@@ -14,6 +14,16 @@
     @if(!empty($themeCssVars))
     <style id="theme-vars">{!! $themeCssVars !!}</style>
     @endif
+    @auth
+    @php $nscBrand = \App\Support\ClientBrand::forCurrent(); @endphp
+    @if(\App\Support\ClientBrand::cssVars($nscBrand) !== '')
+    <style id="nsc-brand">{!! \App\Support\ClientBrand::cssVars($nscBrand) !!}</style>
+    @endif
+    @if($nscBrand['favicon'] !== '')
+    <link rel="icon" href="{{ $nscBrand['favicon'] }}">
+    @endif
+    @include('client.layouts.partials.shell-styles')
+    @endauth
     <style>
         *{box-sizing:border-box;margin:0;padding:0}
         :root{
@@ -321,7 +331,7 @@
     <link rel="stylesheet" href="{{ asset('css/rtl.css') }}">
     @endif
 </head>
-<body>
+<body class="{{ auth()->check() ? 'nsc-shell' : '' }}">
 @if(session('impersonating_admin_id'))
 <div style="background:#f59e0b;color:#000;padding:8px 16px;text-align:center;font-weight:600;font-size:13px;position:sticky;top:0;z-index:9999;">
     {{ __("client.impersonation.viewing_as") }} {{ auth()->user()->full_name ?? auth()->user()->email }}.
@@ -331,6 +341,25 @@
 </div>
 @endif
 
+@auth
+<div class="nsc-app">
+@include('client.layouts.partials.sidebar')
+<div class="nsc-main">
+<div class="nsc-top">
+    <button type="button" class="nsc-menu" onclick="document.getElementById('nscSide').classList.toggle('open')">{{ __('portal.menu') }}</button>
+    <div class="pn-nav-right">
+    @include("client.layouts.partials.language-selector")
+    @if($darkModeEnabled ?? false)
+    <button onclick="toggleDarkMode()" class="dark-toggle" title="{{ __('client.toggle_dark_mode') }}" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;color:var(--muted);font-size:16px;">
+        <i class="ri-sun-line" id="lightIcon" style="display:none;"></i>
+        <i class="ri-moon-line" id="darkIcon"></i>
+    </button>
+    @endif
+    </div>
+</div>
+@endauth
+
+@guest
 <nav class="pn-navbar">
     <div class="pn-navbar-inner">
         <a href="{{ route("client.home") }}" class="pn-brand">@if(!empty($customLogo))<img src="{{ $customLogo }}" alt="Logo" style="max-height:32px;">@else {{ company_name() }} <span class="pn-brand-dot"></span>@endif</a>
@@ -540,6 +569,7 @@
         @endauth
     </div>
 </nav>
+@endguest
 
 <div class="pn-main">
     @if(session("success"))
@@ -592,6 +622,10 @@
     &nbsp;&middot;&nbsp;
     <a href="{{ route("client.kb.index") }}">{{ __('client.nav.knowledge_base') }}</a>
 </footer>
+@auth
+</div>
+</div>
+@endauth
 
 @yield("scripts")
 {{-- A page may push instead of yielding; without this the block is silently discarded. --}}

@@ -4,6 +4,7 @@ use App\Http\Controllers\Client\AccountController;
 use App\Http\Controllers\Client\AffiliateController;
 use App\Http\Controllers\Client\AnnouncementController;
 use App\Http\Controllers\Client\AuthController;
+use App\Http\Controllers\Client\BrandingController;
 use App\Http\Controllers\Client\CartController;
 use App\Http\Controllers\Client\ContactController;
 use App\Http\Controllers\Client\DomainController;
@@ -239,6 +240,10 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::delete('account/contacts/{contact}', [AccountController::class, 'destroyContact'])->name('account.contacts.destroy');
         Route::get('account/payment-methods', [AccountController::class, 'paymentMethods'])->name('account.payment_methods');
         Route::get('account/security', [AccountController::class, 'security'])->name('account.security');
+        // Personalización: the customer's own portal branding.
+        Route::get('account/branding', [BrandingController::class, 'edit'])->name('branding.edit');
+        Route::put('account/branding', [BrandingController::class, 'update'])->name('branding.update');
+        Route::post('account/branding/verify-domain', [BrandingController::class, 'verifyDomain'])->middleware('throttle:10,1')->name('branding.verify');
         Route::post('account/phone/verification', [\App\Http\Controllers\Client\PhoneVerificationController::class, 'start'])->name('account.phone.verify');
         Route::post('account/phone/verification-check', [\App\Http\Controllers\Client\PhoneVerificationController::class, 'check'])->name('account.phone.verify_check');
         Route::post('account/security/sessions/{sessionId}/logout', [AccountController::class, 'logoutSession'])->name('account.security.logout_session');
