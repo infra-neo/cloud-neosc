@@ -76,3 +76,19 @@ test('access can be granted to a group and reaches its members', function () {
     expect(ClientOrg::effectiveMemberIds($org, (string) $service->id))->toEqualCanonicalizing([$eva, $raul])
         ->and(ClientOrg::serviceIdsFor($org, $eva))->toBe([(string) $service->id]);
 });
+
+test('a member only sees the services granted to them', function () {
+    [$owner, $client] = orgUser();
+    $member = User::factory()->create(['email' => 'eva_'.uniqid().'@example.com']);
+    $client->users()->attach($member->id, ['owner' => false]);
+    $granted = \App\Models\Service::factory()->create(['client_id' => $client->id, 'domain' => 'ok.example']);
+    $other = \App\Models\Service::factory()->create(['client_id' => $client->id, 'domain' => 'no.example']);
+
+    $this->actingAs($owner)->post(route('client.organization.members.store'), ['name' => 'Eva M', 'email' => $member->email, 'role' => 'user']);
+    $mid = ClientOrg::get($client)['members'][0]['id'];
+    $this->actingAs($owner)->put(route('client.organization.access.update', $granted->id), ['members' => [$mid]]);
+
+    $this->actingAs($member)->get(route('client.services.show', $granted->id))->assertOk();
+    $this->actingAs($member)->get(route('client.services.show', $other->id))->assertNotFound();
+    $this->actingAs($owner)->get(route('client.services.show', $other->id))->assertOk();
+});
