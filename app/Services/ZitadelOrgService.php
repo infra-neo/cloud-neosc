@@ -127,6 +127,14 @@ class ZitadelOrgService
                 $created = $this->call('POST', '/v2/users/human', $body, $org);
                 $userId = (string) ($created['userId'] ?? '');
                 if ($userId === '') {
+                    // Already there (the organization's first administrator, or made in the console).
+                    $found = $this->call('POST', '/v2/users', [
+                        'queries' => [['emailQuery' => ['emailAddress' => $member['email'], 'method' => 'TEXT_QUERY_METHOD_EQUALS_IGNORE_CASE']]],
+                        'query' => ['limit' => 1],
+                    ], $org);
+                    $userId = (string) ($found['result'][0]['userId'] ?? '');
+                }
+                if ($userId === '') {
                     return ['ok' => false, 'error' => 'No user id returned'];
                 }
             }

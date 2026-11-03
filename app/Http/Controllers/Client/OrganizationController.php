@@ -23,9 +23,14 @@ class OrganizationController extends Controller
         $client = $this->currentClient();
         abort_unless($client, 404);
 
+        $org = ClientOrg::get($client);
+        if ($this->ensureOwner($client, $org)) {
+            ClientOrg::save($client, $org);
+        }
+
         return view('client.organization.index', [
             'client' => $client,
-            'org' => ClientOrg::get($client),
+            'org' => $org,
             'canManage' => $this->canManage($client),
             'zitadelOn' => $zitadel->enabled(),
             'roles' => ClientOrg::ROLES,
@@ -278,6 +283,30 @@ class OrganizationController extends Controller
         }
 
         return $out;
+    }
+
+    /** The account owner is always listed, as administrator (synced on the next change or Retry). */
+    private function ensureOwner($client, array &$org): bool
+    {
+        $owner = $client->users()->wherePivot('owner', true)->first();
+        if (! $owner) {
+            return false;
+        }
+        foreach ($org['members'] as $m) {
+            if (mb_strtolower((string) ($m['email'] ?? '')) === mb_strtolower($owner->email)) {
+                return false;
+            }
+        }
+        array_unshift($org['members'], [
+            'id' => ClientOrg::newId(),
+            'name' => trim($owner->first_name.' '.$owner->last_name),
+            'email' => mb_strtolower($owner->email),
+            'role' => 'admin', 'departments' => [], 'grants' => [], 'access_grant' => '',
+            'zitadel_user_id' => '', 'status' => 'active',
+            'sync' => 'pending', 'error' => '', 'created_at' => now()->toDateTimeString(),
+        ]);
+
+        return true;
     }
 
     /** Only the account owner changes the organization; everyone in it may look. */

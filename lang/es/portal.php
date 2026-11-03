@@ -156,6 +156,7 @@ return [
         'sync' => [
             'ok' => 'Sincronizado',
             'failed' => 'Error de sincronía',
+            'pending' => 'Pendiente',
             'local' => 'Solo portal',
         ],
     ],
