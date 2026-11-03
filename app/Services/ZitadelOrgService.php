@@ -4,26 +4,39 @@ namespace App\Services;
 
 use App\Models\Client;
 use App\Models\ZitadelProvisioning;
+use App\Support\ClientOrg;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Departments, users and roles of a customer's organization in NeoGuard
- * (Zitadel). Department = project (with the roles admin/manager/user),
- * person = human user of the customer's organization, access = user grant.
+ * People, groups and access of a customer's organization in NeoGuard (Zitadel).
  *
- * Never throws: every method answers ['ok'=>bool, 'error'=>?string, ...] so the
- * portal keeps the local copy and shows the sync state. Uses the same service
- * account as ZitadelProvisioningService.
+ * The application (OIDC client) lives in ONE project of the main organization
+ * (ZITADEL_MAIN_PROJECT_ID). Each customer organization receives that project
+ * through a Project Grant, and every person gets one user grant on it. What
+ * they may do travels in the token as project roles:
+ *
+ *   role_admin | role_manager | role_user   their role in the organization
+ *   grp_<group id>                          each group they belong to
+ *   res_<service id>                        each server/desktop they may open
+ *
+ * Never throws: every method answers ['ok'=>bool,'error'=>?string,...] so the
+ * portal keeps its own copy and shows the sync state.
  */
 class ZitadelOrgService
 {
-    public const ROLE_NAMES = ['admin' => 'Administrador', 'manager' => 'Responsable', 'user' => 'Usuario'];
+    /** @var array<int,string> client id => project grant id, per request */
+    private array $prepared = [];
 
     public function enabled(): bool
     {
         return (bool) config('services.zitadel.enabled');
+    }
+
+    public function mainProjectId(): string
+    {
+        return trim((string) config('services.zitadel.main_project_id'));
     }
 
     public function organizationId(Client $client): ?string
@@ -33,46 +46,72 @@ class ZitadelOrgService
         return is_string($id) && $id !== '' ? $id : null;
     }
 
-    /** @return array{ok:bool,error:?string,id?:string} */
-    public function createDepartment(Client $client, string $name): array
+    /**
+     * Make the main project, its roles and the customer's project grant match
+     * the organization: call before syncing people. Cached per request.
+     *
+     * @param array<string,string> $labels service id => name
+     * @return array{ok:bool,error:?string}
+     */
+    public function prepare(Client $client, array $org, array $labels): array
     {
-        return $this->guard($client, function (string $org) use ($name) {
-            $project = $this->call('POST', '/management/v1/projects', ['name' => $name], $org);
-            $id = $project['id'] ?? null;
-            if (! is_string($id) || $id === '') {
-                return ['ok' => false, 'error' => 'No project id returned'];
-            }
-            foreach (self::ROLE_NAMES as $key => $display) {
-                $this->call('POST', "/management/v1/projects/{$id}/roles", [
-                    'roleKey' => $key, 'displayName' => $display, 'group' => 'neosc',
-                ], $org, true);
+        return $this->guard($client, function (string $customerOrg) use ($client, $org, $labels) {
+            $project = $this->mainProjectId();
+            if ($project === '') {
+                return ['ok' => false, 'error' => 'ZITADEL_MAIN_PROJECT_ID is not set'];
             }
 
-            return ['ok' => true, 'error' => null, 'id' => $id];
-        });
-    }
+            $roles = ['role_admin' => 'Administrador', 'role_manager' => 'Responsable', 'role_user' => 'Usuario'];
+            foreach ($org['departments'] as $d) {
+                $roles['grp_'.$d['id']] = 'Grupo: '.$d['name'];
+            }
+            foreach ($labels as $id => $label) {
+                $roles['res_'.$id] = 'Recurso: '.$label;
+            }
 
-    /** @return array{ok:bool,error:?string} */
-    public function deleteDepartment(Client $client, string $projectId): array
-    {
-        return $this->guard($client, function (string $org) use ($projectId) {
-            $this->call('DELETE', "/management/v1/projects/{$projectId}", [], $org, true);
+            foreach ($roles as $key => $display) {
+                $this->call('POST', "/management/v1/projects/{$project}/roles", [
+                    'roleKey' => $key, 'displayName' => mb_substr($display, 0, 80), 'group' => str_starts_with($key, 'res_') ? 'recursos' : (str_starts_with($key, 'grp_') ? 'grupos' : 'roles'),
+                ], null, true);
+            }
+
+            $grantId = $this->findProjectGrant($project, $customerOrg);
+            $keys = array_keys($roles);
+            if ($grantId === '') {
+                $g = $this->call('POST', "/management/v1/projects/{$project}/grants", ['grantedOrgId' => $customerOrg, 'roleKeys' => $keys], null);
+                $grantId = (string) ($g['grantId'] ?? '');
+                if ($grantId === '') {
+                    $grantId = $this->findProjectGrant($project, $customerOrg);
+                }
+            } else {
+                $this->call('PUT', "/management/v1/projects/{$project}/grants/{$grantId}", ['roleKeys' => $keys], null);
+            }
+            if ($grantId === '') {
+                return ['ok' => false, 'error' => 'Could not create the project grant for the organization'];
+            }
+            $this->prepared[(int) $client->id] = $grantId;
 
             return ['ok' => true, 'error' => null];
         });
     }
 
     /**
-     * Make Zitadel match one member: user exists, has exactly the grants for
-     * the given departments with the member's role. Returns the ids to store.
+     * Make Zitadel match one person: the user exists and has one grant on the
+     * customer's project with exactly their roles.
      *
-     * @param array<string,mixed> $member   local member record
-     * @param array<string,string> $projects department id => zitadel project id
-     * @return array{ok:bool,error:?string,user_id?:string,grants?:array<string,string>}
+     * @param array<string,mixed> $member local record
+     * @param list<string> $serviceIds services they may open
+     * @return array{ok:bool,error:?string,user_id?:string,grant_id?:string}
      */
-    public function syncMember(Client $client, array $member, array $projects, ?string $tempPassword = null): array
+    public function syncMember(Client $client, array $member, array $serviceIds, ?string $tempPassword = null): array
     {
-        return $this->guard($client, function (string $org) use ($member, $projects, $tempPassword) {
+        return $this->guard($client, function (string $org) use ($client, $member, $serviceIds, $tempPassword) {
+            $project = $this->mainProjectId();
+            $projectGrantId = $this->prepared[(int) $client->id] ?? '';
+            if ($project === '' || $projectGrantId === '') {
+                return ['ok' => false, 'error' => 'project-not-prepared'];
+            }
+
             $userId = (string) ($member['zitadel_user_id'] ?? '');
             if ($userId === '') {
                 [$first, $last] = array_pad(explode(' ', trim((string) $member['name']), 2), 2, '');
@@ -92,73 +131,28 @@ class ZitadelOrgService
                 }
             }
 
-            $grants = (array) ($member['grants'] ?? []);
-            $roleKeys = [\App\Support\ClientOrg::normalizeRole((string) $member['role'])];
-
-            foreach ($projects as $deptId => $projectId) {
-                if (! in_array($deptId, (array) ($member['departments'] ?? []), true)) {
-                    continue;
-                }
-                if (! empty($grants[$deptId])) {
-                    $this->call('PUT', "/management/v1/users/{$userId}/grants/{$grants[$deptId]}", ['roleKeys' => $roleKeys], $org);
-                } else {
-                    $g = $this->call('POST', "/management/v1/users/{$userId}/grants", ['projectId' => $projectId, 'roleKeys' => $roleKeys], $org);
-                    if (! empty($g['userGrantId'])) {
-                        $grants[$deptId] = $g['userGrantId'];
-                    }
-                }
+            $roleKeys = ['role_'.ClientOrg::normalizeRole((string) $member['role'])];
+            foreach ((array) ($member['departments'] ?? []) as $g) {
+                $roleKeys[] = 'grp_'.$g;
             }
-            foreach ($grants as $deptId => $grantId) {
-                if (! in_array($deptId, (array) ($member['departments'] ?? []), true)) {
-                    $this->call('DELETE', "/management/v1/users/{$userId}/grants/{$grantId}", [], $org, true);
-                    unset($grants[$deptId]);
-                }
+            foreach ($serviceIds as $s) {
+                $roleKeys[] = 'res_'.$s;
             }
 
-            return ['ok' => true, 'error' => null, 'user_id' => $userId, 'grants' => $grants];
-        });
-    }
-
-    /**
-     * Which services a person may open, as project roles `res_<service id>` on
-     * the customer's main project; one grant per person carries them all.
-     *
-     * @param array<string,mixed> $member
-     * @param array<string,string> $labels service id => name (shown in NeoGuard)
-     * @param list<string> $serviceIds
-     * @return array{ok:bool,error:?string,grant_id?:string}
-     */
-    public function syncAccess(Client $client, array $member, array $serviceIds, array $labels): array
-    {
-        return $this->guard($client, function (string $org) use ($client, $member, $serviceIds, $labels) {
-            $project = ZitadelProvisioning::where('client_id', $client->id)->value('zitadel_project_id');
-            $userId = (string) ($member['zitadel_user_id'] ?? '');
-            if (! is_string($project) || $project === '' || $userId === '') {
-                return ['ok' => false, 'error' => 'project-or-user-missing'];
-            }
             $grantId = (string) ($member['access_grant'] ?? '');
-            $roleKeys = array_map(fn ($id) => 'res_'.$id, $serviceIds);
-
-            if ($roleKeys === []) {
-                if ($grantId !== '') {
-                    $this->call('DELETE', "/management/v1/users/{$userId}/grants/{$grantId}", [], $org, true);
-                }
-
-                return ['ok' => true, 'error' => null, 'grant_id' => ''];
-            }
-            foreach ($serviceIds as $id) {
-                $this->call('POST', "/management/v1/projects/{$project}/roles", [
-                    'roleKey' => 'res_'.$id, 'displayName' => mb_substr($labels[$id] ?? ('Servicio '.$id), 0, 60), 'group' => 'recursos',
-                ], $org, true);
+            if ($grantId === '') {
+                $grantId = $this->findUserGrant($userId, $project, $org);
             }
             if ($grantId !== '') {
                 $this->call('PUT', "/management/v1/users/{$userId}/grants/{$grantId}", ['roleKeys' => $roleKeys], $org);
             } else {
-                $g = $this->call('POST', "/management/v1/users/{$userId}/grants", ['projectId' => $project, 'roleKeys' => $roleKeys], $org);
+                $g = $this->call('POST', "/management/v1/users/{$userId}/grants", [
+                    'projectId' => $project, 'projectGrantId' => $projectGrantId, 'roleKeys' => $roleKeys,
+                ], $org);
                 $grantId = (string) ($g['userGrantId'] ?? '');
             }
 
-            return ['ok' => true, 'error' => null, 'grant_id' => $grantId];
+            return ['ok' => true, 'error' => null, 'user_id' => $userId, 'grant_id' => $grantId];
         });
     }
 
@@ -180,6 +174,24 @@ class ZitadelOrgService
 
             return ['ok' => true, 'error' => null];
         });
+    }
+
+    private function findProjectGrant(string $project, string $customerOrg): string
+    {
+        $r = $this->call('POST', "/management/v1/projects/{$project}/grants/_search", [
+            'queries' => [['grantedOrgIdQuery' => ['grantedOrgId' => $customerOrg]]],
+        ], null);
+
+        return (string) ($r['result'][0]['grantId'] ?? '');
+    }
+
+    private function findUserGrant(string $userId, string $project, string $org): string
+    {
+        $r = $this->call('POST', '/management/v1/users/grants/_search', [
+            'queries' => [['userIdQuery' => ['userId' => $userId]], ['projectIdQuery' => ['projectId' => $project]]],
+        ], $org);
+
+        return (string) ($r['result'][0]['id'] ?? ($r['result'][0]['userGrantId'] ?? ''));
     }
 
     private function guard(Client $client, callable $fn): array
@@ -207,34 +219,40 @@ class ZitadelOrgService
         } catch (\Throwable $e) {
             Log::warning('Zitadel org sync failed', ['client_id' => $client->id, 'error' => $e->getMessage()]);
 
-            return ['ok' => false, 'error' => mb_substr($e->getMessage(), 0, 200)];
+            return ['ok' => false, 'error' => mb_substr($e->getMessage(), 0, 220)];
         }
     }
 
     /**
      * @param array<string,mixed> $payload
+     * @param string|null $org customer org id; null = the service account's own (main) organization
      * @return array<string,mixed>
      */
-    private function call(string $method, string $path, array $payload, string $org, bool $tolerateExisting = false): array
+    private function call(string $method, string $path, array $payload, ?string $org, bool $tolerateExisting = false): array
     {
         $issuer = rtrim((string) config('services.zitadel.issuer'), '/');
+        $header = $org ?? trim((string) config('services.zitadel.main_org_id'));
         try {
             $req = Http::withToken($this->token($issuer))->acceptJson()
-                ->timeout((int) config('services.zitadel.timeout', 15))
-                ->withHeaders(['x-zitadel-orgid' => $org]);
-            $response = $method === 'DELETE' || $method === 'GET'
+                ->timeout((int) config('services.zitadel.timeout', 15));
+            if ($header !== '') {
+                $req = $req->withHeaders(['x-zitadel-orgid' => $header]);
+            }
+            $response = in_array($method, ['DELETE', 'GET'], true)
                 ? $req->send($method, $issuer.$path)
                 : $req->send($method, $issuer.$path, ['json' => (object) $payload]);
         } catch (ConnectionException) {
             throw new \RuntimeException('Could not connect to NeoGuard');
         }
 
-        // Already there / already gone is the state we wanted.
-        if ($tolerateExisting && in_array($response->status(), [404, 409], true)) {
-            return [];
-        }
+        $message = (string) ($response->json('message') ?? '');
+        // Already there / already gone / nothing to change is the state we wanted.
         if (! $response->successful()) {
-            throw new \RuntimeException(sprintf('NeoGuard HTTP %d on %s %s: %s', $response->status(), $method, preg_replace('#/[0-9]{6,}#', '/{id}', $path), mb_substr((string) ($response->json('message') ?? $response->body()), 0, 140)));
+            $unchanged = $response->status() === 400 && preg_match('/has not been changed|not changed|no changes|already exists/i', $message);
+            if ($unchanged || ($tolerateExisting && in_array($response->status(), [404, 409], true)) || $response->status() === 409) {
+                return [];
+            }
+            throw new \RuntimeException(sprintf('NeoGuard HTTP %d on %s %s: %s', $response->status(), $method, preg_replace('#/[0-9]{6,}#', '/{id}', $path), mb_substr($message !== '' ? $message : $response->body(), 0, 140)));
         }
 
         return (array) $response->json();

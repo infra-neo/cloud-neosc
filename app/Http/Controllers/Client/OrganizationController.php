@@ -47,13 +47,14 @@ class OrganizationController extends Controller
         }
 
         $dept = ['id' => ClientOrg::newId(), 'name' => $name, 'project_id' => '', 'sync' => 'local', 'error' => ''];
-        if ($zitadel->enabled()) {
-            $r = $zitadel->createDepartment($client, $name.' ('.$client->id.')');
-            $dept['project_id'] = $r['id'] ?? '';
-            $dept['sync'] = $r['ok'] ? 'ok' : 'failed';
-            $dept['error'] = $r['ok'] ? '' : (string) $r['error'];
-        }
         $org['departments'][] = $dept;
+        if ($zitadel->enabled()) {
+            // The group becomes a role (grp_<id>) of the shared project.
+            $r = $zitadel->prepare($client, $org, $this->resources($client));
+            $last = array_key_last($org['departments']);
+            $org['departments'][$last]['sync'] = $r['ok'] ? 'ok' : 'failed';
+            $org['departments'][$last]['error'] = $r['ok'] ? '' : (string) $r['error'];
+        }
         ClientOrg::save($client, $org);
 
         return back()->with('success', __('portal.org.dept_saved'));
@@ -68,14 +69,15 @@ class OrganizationController extends Controller
             if ($d['id'] !== $department) {
                 continue;
             }
-            if ($zitadel->enabled() && ($d['project_id'] ?? '') !== '') {
-                $zitadel->deleteDepartment($client, $d['project_id']);
-            }
             unset($org['departments'][$i]);
             foreach ($org['members'] as $j => $m) {
                 $org['members'][$j]['departments'] = array_values(array_diff((array) ($m['departments'] ?? []), [$department]));
-                unset($org['members'][$j]['grants'][$department]);
             }
+        }
+        $org['departments'] = array_values($org['departments']);
+        unset($org['access'][$department]);
+        if ($zitadel->enabled()) {
+            $this->syncEveryone($zitadel, $client, $org);
         }
         ClientOrg::save($client, $org);
 
@@ -159,9 +161,9 @@ class OrganizationController extends Controller
         $i = ClientOrg::findMember($org, $member);
         abort_if($i === null, 404);
 
-        $this->syncDepartments($zitadel, $client, $org);
         if ($zitadel->enabled()) {
             $this->sync($zitadel, $client, $org, $org['members'][$i]);
+            $this->markGroups($zitadel, $client, $org);
         }
         ClientOrg::save($client, $org);
 
@@ -201,50 +203,42 @@ class OrganizationController extends Controller
         return back()->with('success', __('portal.org.member_deleted'));
     }
 
-    /** Retry creating the project of any department that failed earlier. */
-    private function syncDepartments(ZitadelOrgService $zitadel, $client, array &$org): void
+    /** Re-run the shared-project setup and mark every group with the result. */
+    private function markGroups(ZitadelOrgService $zitadel, $client, array &$org): void
     {
-        if (! $zitadel->enabled()) {
-            return;
-        }
+        $r = $zitadel->prepare($client, $org, $this->resources($client));
         foreach ($org['departments'] as $i => $d) {
-            if (($d['project_id'] ?? '') !== '') {
-                continue;
-            }
-            $r = $zitadel->createDepartment($client, $d['name'].' ('.$client->id.')');
-            $org['departments'][$i]['project_id'] = $r['id'] ?? '';
             $org['departments'][$i]['sync'] = $r['ok'] ? 'ok' : 'failed';
             $org['departments'][$i]['error'] = $r['ok'] ? '' : (string) $r['error'];
         }
     }
 
+    private function syncEveryone(ZitadelOrgService $zitadel, $client, array &$org): void
+    {
+        $this->markGroups($zitadel, $client, $org);
+        foreach ($org['members'] as $i => $m) {
+            $this->sync($zitadel, $client, $org, $org['members'][$i]);
+        }
+    }
+
     private function sync(ZitadelOrgService $zitadel, $client, array $org, array &$member, ?string $temp = null): void
     {
-        $projects = [];
-        foreach ($org['departments'] as $d) {
-            if (($d['project_id'] ?? '') !== '') {
-                $projects[$d['id']] = $d['project_id'];
-            }
-        }
-        $r = $zitadel->syncMember($client, $member, $projects, $temp);
-        if (! $r['ok']) {
+        $prep = $zitadel->prepare($client, $org, $this->resources($client));
+        if (! $prep['ok']) {
             $member['sync'] = 'failed';
-            $member['error'] = (string) $r['error'];
+            $member['error'] = (string) $prep['error'];
 
             return;
         }
-        $member['zitadel_user_id'] = $r['user_id'] ?? $member['zitadel_user_id'];
-        $member['grants'] = $r['grants'] ?? [];
-
-        // Which services this person may open.
-        $a = $zitadel->syncAccess($client, $member, ClientOrg::serviceIdsFor($org, (string) $member['id']), $this->resources($client));
-        if ($a['ok']) {
-            $member['access_grant'] = $a['grant_id'] ?? '';
+        $r = $zitadel->syncMember($client, $member, ClientOrg::serviceIdsFor($org, (string) $member['id']), $temp);
+        if ($r['ok']) {
+            $member['zitadel_user_id'] = $r['user_id'] ?? ($member['zitadel_user_id'] ?? '');
+            $member['access_grant'] = $r['grant_id'] ?? '';
             $member['sync'] = 'ok';
             $member['error'] = '';
         } else {
             $member['sync'] = 'failed';
-            $member['error'] = (string) $a['error'];
+            $member['error'] = (string) $r['error'];
         }
     }
 
@@ -265,10 +259,7 @@ class OrganizationController extends Controller
         }
 
         if ($zitadel->enabled()) {
-            $this->syncDepartments($zitadel, $client, $org);
-            foreach ($org['members'] as $i => $m) {
-                $this->sync($zitadel, $client, $org, $org['members'][$i]);
-            }
+            $this->syncEveryone($zitadel, $client, $org);
         }
         ClientOrg::save($client, $org);
 
