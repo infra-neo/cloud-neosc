@@ -59,3 +59,20 @@ test('deleting a department removes it from members', function () {
     $org = ClientOrg::get($client);
     expect($org['departments'])->toBeEmpty()->and($org['members'][0]['departments'])->toBeEmpty();
 });
+
+test('access can be granted to a group and reaches its members', function () {
+    [$user, $client] = orgUser();
+    $this->actingAs($user)->post(route('client.organization.departments.store'), ['name' => 'Ventas']);
+    $g = ClientOrg::get($client)['departments'][0]['id'];
+    $this->actingAs($user)->post(route('client.organization.members.store'), ['name' => 'Eva M', 'email' => 'eva@example.com', 'role' => 'user', 'departments' => [$g]]);
+    $this->actingAs($user)->post(route('client.organization.members.store'), ['name' => 'Raúl P', 'email' => 'raul@example.com', 'role' => 'user']);
+    $org = ClientOrg::get($client);
+    [$eva, $raul] = [$org['members'][0]['id'], $org['members'][1]['id']];
+
+    $service = \App\Models\Service::factory()->create(['client_id' => $client->id, 'domain' => 'srv1']);
+    $this->actingAs($user)->put(route('client.organization.access.update', $service->id), ['groups' => [$g], 'members' => [$raul, 'ghost']])->assertRedirect();
+
+    $org = ClientOrg::get($client);
+    expect(ClientOrg::effectiveMemberIds($org, (string) $service->id))->toEqualCanonicalizing([$eva, $raul])
+        ->and(ClientOrg::serviceIdsFor($org, $eva))->toBe([(string) $service->id]);
+});

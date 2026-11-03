@@ -119,6 +119,49 @@ class ZitadelOrgService
         });
     }
 
+    /**
+     * Which services a person may open, as project roles `res_<service id>` on
+     * the customer's main project; one grant per person carries them all.
+     *
+     * @param array<string,mixed> $member
+     * @param array<string,string> $labels service id => name (shown in NeoGuard)
+     * @param list<string> $serviceIds
+     * @return array{ok:bool,error:?string,grant_id?:string}
+     */
+    public function syncAccess(Client $client, array $member, array $serviceIds, array $labels): array
+    {
+        return $this->guard($client, function (string $org) use ($client, $member, $serviceIds, $labels) {
+            $project = ZitadelProvisioning::where('client_id', $client->id)->value('zitadel_project_id');
+            $userId = (string) ($member['zitadel_user_id'] ?? '');
+            if (! is_string($project) || $project === '' || $userId === '') {
+                return ['ok' => false, 'error' => 'project-or-user-missing'];
+            }
+            $grantId = (string) ($member['access_grant'] ?? '');
+            $roleKeys = array_map(fn ($id) => 'res_'.$id, $serviceIds);
+
+            if ($roleKeys === []) {
+                if ($grantId !== '') {
+                    $this->call('DELETE', "/management/v1/users/{$userId}/grants/{$grantId}", [], $org, true);
+                }
+
+                return ['ok' => true, 'error' => null, 'grant_id' => ''];
+            }
+            foreach ($serviceIds as $id) {
+                $this->call('POST', "/management/v1/projects/{$project}/roles", [
+                    'roleKey' => 'res_'.$id, 'displayName' => mb_substr($labels[$id] ?? ('Servicio '.$id), 0, 60), 'group' => 'recursos',
+                ], $org, true);
+            }
+            if ($grantId !== '') {
+                $this->call('PUT', "/management/v1/users/{$userId}/grants/{$grantId}", ['roleKeys' => $roleKeys], $org);
+            } else {
+                $g = $this->call('POST', "/management/v1/users/{$userId}/grants", ['projectId' => $project, 'roleKeys' => $roleKeys], $org);
+                $grantId = (string) ($g['userGrantId'] ?? '');
+            }
+
+            return ['ok' => true, 'error' => null, 'grant_id' => $grantId];
+        });
+    }
+
     /** @return array{ok:bool,error:?string} */
     public function removeUser(Client $client, string $userId): array
     {
@@ -145,8 +188,19 @@ class ZitadelOrgService
             return ['ok' => false, 'error' => 'disabled'];
         }
         $org = $this->organizationId($client);
+        if ($org === null && auth()->check()) {
+            // The sign-up provisioning never finished: do it now with the signed-in owner.
+            try {
+                app(ZitadelProvisioningService::class)->provision($client, auth()->user());
+            } catch (\Throwable $e) {
+                Log::warning('Zitadel late provisioning failed', ['client_id' => $client->id, 'error' => $e->getMessage()]);
+            }
+            $org = $this->organizationId($client);
+        }
         if ($org === null) {
-            return ['ok' => false, 'error' => 'organization-not-provisioned'];
+            $why = ZitadelProvisioning::where('client_id', $client->id)->value('last_error');
+
+            return ['ok' => false, 'error' => 'organization-not-provisioned'.($why ? ': '.$why : '')];
         }
         try {
             return $fn($org);
@@ -180,7 +234,7 @@ class ZitadelOrgService
             return [];
         }
         if (! $response->successful()) {
-            throw new \RuntimeException(sprintf('NeoGuard answered HTTP %d on %s %s', $response->status(), $method, preg_replace('#/[0-9]{6,}#', '/{id}', $path)));
+            throw new \RuntimeException(sprintf('NeoGuard HTTP %d on %s %s: %s', $response->status(), $method, preg_replace('#/[0-9]{6,}#', '/{id}', $path), mb_substr((string) ($response->json('message') ?? $response->body()), 0, 140)));
         }
 
         return (array) $response->json();

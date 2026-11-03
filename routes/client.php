@@ -249,6 +249,7 @@ Route::prefix('client')->name('client.')->middleware('banned.ip')->group(functio
         Route::post('organization/departments', [\App\Http\Controllers\Client\OrganizationController::class, 'storeDepartment'])->name('organization.departments.store');
         Route::delete('organization/departments/{department}', [\App\Http\Controllers\Client\OrganizationController::class, 'destroyDepartment'])->name('organization.departments.destroy');
         Route::post('organization/members', [\App\Http\Controllers\Client\OrganizationController::class, 'storeMember'])->name('organization.members.store');
+        Route::put('organization/access/{service}', [\App\Http\Controllers\Client\OrganizationController::class, 'updateAccess'])->name('organization.access.update');
         Route::put('organization/members/{member}', [\App\Http\Controllers\Client\OrganizationController::class, 'updateMember'])->name('organization.members.update');
         Route::post('organization/members/{member}/resync', [\App\Http\Controllers\Client\OrganizationController::class, 'resync'])->name('organization.members.resync');
         Route::post('organization/members/{member}/toggle', [\App\Http\Controllers\Client\OrganizationController::class, 'toggleMember'])->name('organization.members.toggle');

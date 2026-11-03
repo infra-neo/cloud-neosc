@@ -29,6 +29,7 @@ class OrganizationController extends Controller
             'canManage' => $this->canManage($client),
             'zitadelOn' => $zitadel->enabled(),
             'roles' => ClientOrg::ROLES,
+            'resources' => $this->resources($client),
         ]);
     }
 
@@ -226,15 +227,66 @@ class OrganizationController extends Controller
             }
         }
         $r = $zitadel->syncMember($client, $member, $projects, $temp);
-        if ($r['ok']) {
-            $member['zitadel_user_id'] = $r['user_id'] ?? $member['zitadel_user_id'];
-            $member['grants'] = $r['grants'] ?? [];
+        if (! $r['ok']) {
+            $member['sync'] = 'failed';
+            $member['error'] = (string) $r['error'];
+
+            return;
+        }
+        $member['zitadel_user_id'] = $r['user_id'] ?? $member['zitadel_user_id'];
+        $member['grants'] = $r['grants'] ?? [];
+
+        // Which services this person may open.
+        $a = $zitadel->syncAccess($client, $member, ClientOrg::serviceIdsFor($org, (string) $member['id']), $this->resources($client));
+        if ($a['ok']) {
+            $member['access_grant'] = $a['grant_id'] ?? '';
             $member['sync'] = 'ok';
             $member['error'] = '';
         } else {
             $member['sync'] = 'failed';
-            $member['error'] = (string) $r['error'];
+            $member['error'] = (string) $a['error'];
         }
+    }
+
+    /** Who may open which service: people and whole groups, per service. */
+    public function updateAccess(Request $request, string $service, ZitadelOrgService $zitadel)
+    {
+        $client = $this->managedClient();
+        $resources = $this->resources($client);
+        abort_unless(isset($resources[$service]), 404);
+
+        $org = ClientOrg::get($client);
+        $members = array_values(array_intersect(array_column($org['members'], 'id'), array_map('strval', (array) $request->input('members', []))));
+        $groups = ClientOrg::cleanDepartments($org, $request->input('groups', []));
+        if ($members === [] && $groups === []) {
+            unset($org['access'][$service]);
+        } else {
+            $org['access'][$service] = ['members' => $members, 'groups' => $groups];
+        }
+
+        if ($zitadel->enabled()) {
+            $this->syncDepartments($zitadel, $client, $org);
+            foreach ($org['members'] as $i => $m) {
+                $this->sync($zitadel, $client, $org, $org['members'][$i]);
+            }
+        }
+        ClientOrg::save($client, $org);
+
+        return back()->with('success', __('portal.org.access_saved'))->with('nsc_tab', 'access');
+    }
+
+    /** @return array<string,string> service id => label */
+    private function resources($client): array
+    {
+        $out = [];
+        foreach ($client->services()->with('product')->orderBy('id')->get() as $svc) {
+            if (in_array($svc->status, ['terminated', 'cancelled'], true)) {
+                continue;
+            }
+            $out[(string) $svc->id] = (string) ($svc->domain ?: ($svc->product->name ?? ('#'.$svc->id)));
+        }
+
+        return $out;
     }
 
     /** Only the account owner changes the organization; everyone in it may look. */
