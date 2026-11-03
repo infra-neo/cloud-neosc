@@ -2,24 +2,37 @@
 
 namespace App\Providers;
 
-use App\Models\Client;
 use App\Models\Service;
 use App\Support\ClientOrg;
+use App\Support\NeoscAccess;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Scope;
+use Illuminate\Routing\Events\RouteMatched;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 /**
- * In the client area, a person who is not the account owner and not an
- * organization administrator only sees the services the organization granted
- * them (Organización > Accesos): directly or through a group. Everyone else,
- * and everything outside the client area, is unchanged.
+ * In the client area:
+ *  - a person who is not the account owner nor an organization administrator
+ *    only sees the services the organization granted them (Organización >
+ *    Accesos), directly or through a group;
+ *  - a plain "user" cannot open buying, billing or organization pages.
+ * The owner, administrators, people the organization does not list, and
+ * everything outside the client area are unchanged.
  */
 class NeoscOrgServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
+        Event::listen(RouteMatched::class, function (RouteMatched $e) {
+            $name = (string) ($e->route->getName() ?? '');
+            if (str_starts_with($name, 'client.') && preg_match(NeoscAccess::USER_DENIED, $name)
+                && NeoscAccess::roleFor(auth()->user()) === 'user') {
+                abort(403);
+            }
+        });
+
         Service::addGlobalScope('neosc_org_access', new class implements Scope
         {
             public function apply(Builder $builder, Model $model): void
@@ -42,31 +55,15 @@ class NeoscOrgServiceProvider extends ServiceProvider
                 if ($route === null || ! (preg_match('/^client\.(home|services|vps|lxd|one)\b/', $name) || $route->hasParameter('service'))) {
                     return null;
                 }
-                $user = auth()->user();
-                if (! $user) {
-                    return null;
-                }
 
                 $busy = true;
                 try {
-                    $clients = $user->clients()->orderBy('clients.id')->get();
-                    $active = (int) session('active_client_id');
-                    $client = $clients->firstWhere('id', $active) ?: $clients->first();
-                    if (! $client instanceof Client || $client->pivot?->owner) {
+                    $ctx = NeoscAccess::context(auth()->user());
+                    if (! in_array($ctx['role'], ['manager', 'user'], true)) {
                         return null;
                     }
-                    $org = ClientOrg::get($client);
-                    foreach ($org['members'] as $m) {
-                        if (mb_strtolower((string) ($m['email'] ?? '')) === mb_strtolower($user->email)) {
-                            if (($m['role'] ?? 'user') === 'admin') {
-                                return null;
-                            }
 
-                            return array_map('intval', ClientOrg::serviceIdsFor($org, (string) $m['id']));
-                        }
-                    }
-
-                    return null; // not listed in an organization: leave the account as it is
+                    return array_map('intval', ClientOrg::serviceIdsFor($ctx['org'], (string) $ctx['member']['id']));
                 } finally {
                     $busy = false;
                 }

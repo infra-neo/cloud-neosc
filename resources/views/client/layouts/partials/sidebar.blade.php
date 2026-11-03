@@ -41,6 +41,16 @@
             ['client.affiliates.index', 'client.affiliates.*', __('client.nav.affiliates')],
         ]],
     ];
+    // A plain "user" of the organization only gets their services, support and their own profile.
+    if (\App\Support\NeoscAccess::roleFor($nscUser) === 'user') {
+        foreach ($nscGroups as $gi => $group) {
+            $nscGroups[$gi]['items'] = array_values(array_filter(
+                $group['items'],
+                fn ($item) => ! preg_match(\App\Support\NeoscAccess::USER_DENIED, $item[0])
+            ));
+        }
+        $nscGroups = array_values(array_filter($nscGroups, fn ($g) => $g['items'] !== []));
+    }
 @endphp
 <aside class="nsc-side" id="nscSide" aria-label="{{ __('portal.menu') }}">
     <a href="{{ route('client.home') }}" class="nsc-brand">

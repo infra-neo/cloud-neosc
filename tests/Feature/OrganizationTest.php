@@ -92,3 +92,15 @@ test('a member only sees the services granted to them', function () {
     $this->actingAs($member)->get(route('client.services.show', $other->id))->assertNotFound();
     $this->actingAs($owner)->get(route('client.services.show', $other->id))->assertOk();
 });
+
+test('a plain user gets a minimal menu and cannot open billing', function () {
+    [$owner, $client] = orgUser();
+    $member = User::factory()->create(['email' => 'ivo_'.uniqid().'@example.com']);
+    $client->users()->attach($member->id, ['owner' => false]);
+    $this->actingAs($owner)->post(route('client.organization.members.store'), ['name' => 'Ivo R', 'email' => $member->email, 'role' => 'user']);
+
+    $this->actingAs($member)->get(route('client.invoices.index'))->assertForbidden();
+    $this->actingAs($member)->get(route('client.organization.index'))->assertForbidden();
+    $this->actingAs($member)->get(route('client.services.index'))->assertOk()->assertDontSee(route('client.invoices.index'), false);
+    $this->actingAs($owner)->get(route('client.invoices.index'))->assertOk();
+});
