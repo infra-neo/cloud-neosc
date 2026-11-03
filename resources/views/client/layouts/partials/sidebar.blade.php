@@ -41,6 +41,16 @@
             ['client.affiliates.index', 'client.affiliates.*', __('client.nav.affiliates')],
         ]],
     ];
+    // "Conectar": opens the connection portal. The address is the setting
+    // neosc_connect_url (https only), so it can change without touching code.
+    $nscConnect = trim((string) \App\Models\Setting::get('neosc_connect_url', 'https://portal-web.kappa4.com/'));
+    $nscActiveId = (int) session('active_client_id', optional($nscAccounts->first())->id);
+    if (! str_starts_with($nscConnect, 'https://') || ! \App\Models\Service::where('client_id', $nscActiveId)->exists()) {
+        $nscConnect = '';
+    }
+    if ($nscConnect !== '') {
+        array_splice($nscGroups[1]['items'], 1, 0, [[$nscConnect, '', __('portal.connect')]]);
+    }
     // A plain "user" of the organization only gets their services, support and their own profile.
     if (\App\Support\NeoscAccess::roleFor($nscUser) === 'user') {
         foreach ($nscGroups as $gi => $group) {
@@ -76,8 +86,13 @@
         @foreach($nscGroups as $group)
             <div class="nsc-grp">{{ __('portal.group.'.$group['key']) }}</div>
             @foreach($group['items'] as [$route, $pattern, $label])
-                @continue(! \Illuminate\Support\Facades\Route::has($route))
+                @php $nscExternal = str_starts_with($route, 'https://'); @endphp
+                @continue(! $nscExternal && ! \Illuminate\Support\Facades\Route::has($route))
+                @if($nscExternal)
+                    <a href="{{ $route }}" target="_blank" rel="noopener noreferrer">{{ $label }} &#8599;</a>
+                @else
                 <a href="{{ route($route) }}" class="{{ request()->routeIs($pattern) ? 'active' : '' }}" @if(request()->routeIs($pattern)) aria-current="page" @endif>{{ $label }}</a>
+                @endif
             @endforeach
         @endforeach
     </nav>

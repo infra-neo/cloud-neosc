@@ -8,6 +8,7 @@ return [
         'support' => 'Soporte',
         'organization' => 'Organización',
     ],
+    'connect' => 'Conectar',
     'menu' => 'Menú',
     'account_switch' => 'Cuenta activa',
     'brand' => [
