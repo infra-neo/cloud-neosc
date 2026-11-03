@@ -178,11 +178,15 @@ class ZitadelOrgService
 
     private function findProjectGrant(string $project, string $customerOrg): string
     {
-        $r = $this->call('POST', "/management/v1/projects/{$project}/grants/_search", [
-            'queries' => [['grantedOrgIdQuery' => ['grantedOrgId' => $customerOrg]]],
-        ], null);
+        // The search cannot filter by granted organization: list them and pick ours.
+        $r = $this->call('POST', "/management/v1/projects/{$project}/grants/_search", ['query' => ['limit' => 1000]], null);
+        foreach ((array) ($r['result'] ?? []) as $grant) {
+            if (($grant['grantedOrgId'] ?? '') === $customerOrg) {
+                return (string) ($grant['grantId'] ?? '');
+            }
+        }
 
-        return (string) ($r['result'][0]['grantId'] ?? '');
+        return '';
     }
 
     private function findUserGrant(string $userId, string $project, string $org): string
